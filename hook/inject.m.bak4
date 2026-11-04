@@ -1,0 +1,689 @@
+// Nidhogg agent harness — injected into the live game process (YYC build).
+//
+//  * frame tick: swizzle -[NSOpenGLContext flushBuffer]  (main thread, once per frame)
+//  * state:      FFI into the game's own exported GML builtins (F_* symbols)
+//  * input:      F_KeyboardKeyPress / F_KeyboardKeyRelease (focus independent)
+//  * quiet:      window placed offscreen, never activated, fullscreen blocked
+//  * mute:       F_AudioSetMasterGain(0)
+//
+// Control files: /tmp/nid_keys.txt  (one GML key code per line, e.g. 68 = 'D')
+#import <Foundation/Foundation.h>
+#import <AppKit/AppKit.h>
+#include <objc/runtime.h>
+#include <mach-o/loader.h>
+#include <mach-o/dyld.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <signal.h>
+#include <setjmp.h>
+
+typedef struct { union { double d; long long i; void *p; } v; uint32_t kind; uint32_t pad; } RVal;
+typedef void (*GFn)(RVal *, void *, void *, int, RVal *);
+
+static sigjmp_buf g_jmp;
+static volatile sig_atomic_t g_guarded = 0;
+
+static void segv_handler(int sig) {
+    if (g_guarded) { g_guarded = 0; siglongjmp(g_jmp, 1); }
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+static void install_segv_guard(void) {
+    struct sigaction sa; memset(&sa, 0, sizeof sa);
+    sa.sa_handler = segv_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_NODEFER;
+    sigaction(SIGSEGV, &sa, NULL);
+    sigaction(SIGBUS, &sa, NULL);
+}
+
+
+// ---------------------------------------------------------------- instance id
+// Several copies of the game can run at once; each gets its own control files and
+// its own log so the trainer can talk to them independently.
+static char g_id[16] = "0";
+
+static const char *ctl_path(const char *stem) {
+    static char buf[4][128];
+    static int slot = 0;
+    char *b = buf[slot++ & 3];
+    snprintf(b, sizeof buf[0], "/tmp/%s_%s.txt", stem, g_id);
+    return b;
+}
+
+static const char *log_path(void) {
+    static char b[128];
+    snprintf(b, sizeof b, "/tmp/nid_inject_%s.log", g_id);
+    return b;
+}
+
+static FILE *logf_;
+static int frame = 0;
+static int installed_quiet = 0;
+
+#define LOG(...) do { if (!logf_) logf_ = fopen(log_path(), "a"); \
+                      if (logf_) { fprintf(logf_, __VA_ARGS__); fflush(logf_); } } while (0)
+
+// ------------------------------------------------------------ symbol lookup
+static int game_index = -1;
+
+
+// ---- inline hook plumbing -------------------------------------------------
+#include <sys/mman.h>
+#include <libkern/OSCacheControl.h>
+
+extern void nid_hook_entry(void);
+void *nid_tramp = NULL;            // exported for hook.s
+static void *g_hook_target = NULL;
+static int g_hook_calls = 0;
+
+static void log_hooked(void *self, void *other, void *ret, long argc, void *args);
+
+// Called from hook.s with the original argument registers intact.
+void nid_hook_c(void *self, void *other, void *ret, long argc, void *args) {
+    log_hooked(self, other, ret, argc, args);
+}
+
+static uint32_t *write_b(void *at, void *to) {
+    uint32_t *p = (uint32_t *)at;
+    int64_t delta = (int64_t)((char *)to - (char *)at);
+    *p = 0x14000000u | (uint32_t)((delta >> 2) & 0x03FFFFFFu);
+    return p;
+}
+
+static int is_pc_relative(uint32_t insn) {
+    // adrp, adr, b, bl
+    if ((insn & 0x9F000000u) == 0x90000000u) return 1;
+    if ((insn & 0x1F000000u) == 0x10000000u) return 1;
+    if ((insn & 0x7C000000u) == 0x14000000u) return 1;
+    return 0;
+}
+
+static int install_hook(void *target, const char *name) {
+    if (!target) return 0;
+    uint32_t *src = (uint32_t *)target;
+    for (int i = 0; i < 4; i++) {
+        if (is_pc_relative(src[i])) {
+            LOG("[hookIN] %s: pc-relative insn at +%d, refusing\n", name, i * 4);
+            return 0;
+        }
+    }
+    size_t pagesz = 4096;
+    // Apple Silicon forbids anonymous RWX pages: map RW, fill, then flip to RX.
+    void *page = mmap(NULL, pagesz, PROT_READ | PROT_WRITE,
+                      MAP_ANON | MAP_PRIVATE, -1, 0);
+    if (page == MAP_FAILED) { LOG("[hookIN] mmap failed\n"); return 0; }
+    uint32_t *tramp = (uint32_t *)page;
+    for (int i = 0; i < 4; i++) tramp[i] = src[i];
+    write_b(&tramp[4], (char *)target + 16);
+    nid_tramp = (void *)tramp;
+    if (mprotect(page, pagesz, PROT_READ | PROT_EXEC) != 0) {
+        LOG("[hookIN] mprotect trampoline failed\n");
+        return 0;
+    }
+    sys_icache_invalidate(page, pagesz);
+
+    // make the target writable, patch, restore protection
+    vm_address_t tp = (vm_address_t)((uintptr_t)target & ~(pagesz - 1));
+    if (!vm_protect(mach_task_self(), tp, pagesz, false, VM_PROT_READ | VM_PROT_WRITE)) {
+        LOG("[hookIN] vm_protect RW failed for target page\n");
+        return 0;
+    }
+    uint32_t patch[4];
+    patch[0] = 0x58000050u;                 // ldr x16, #8
+    patch[1] = 0xD61F0200u;                 // br x16
+    uint64_t dest = (uint64_t)(uintptr_t)&nid_hook_entry;
+    memcpy(&patch[2], &dest, 8);
+    memcpy(src, patch, 16);
+    sys_icache_invalidate(target, 16);
+    vm_protect(mach_task_self(), tp, pagesz, false, VM_PROT_READ | VM_PROT_EXECUTE);
+    g_hook_target = target;
+    LOG("[hookIN] installed on %s at %p (tramp %p)\n", name, target, page);
+    return 1;
+}
+
+static void *symaddr(uint64_t nm_addr, const char *name) {
+    if (game_index < 0) {
+        uint32_t n = _dyld_image_count();
+        for (uint32_t i = 0; i < n; i++) {
+            const char *nm = _dyld_get_image_name(i);
+            if (nm && strstr(nm, "MacOS/Nidhogg")) { game_index = (int)i; break; }
+        }
+    }
+    if (game_index < 0) { LOG("[hook] game image not found\n"); return NULL; }
+    intptr_t slide = _dyld_get_image_vmaddr_slide((uint32_t)game_index);
+    void *p = (void *)(uintptr_t)((int64_t)nm_addr + (int64_t)slide);
+    LOG("[hook] %s -> %p\n", name, p);
+    return p;
+}
+
+// --------------------------------------------------------------- GML FFI
+static GFn pInstNumber, pInstExists, pKeyPress, pKeyRelease, pAudioMaster, pAudioMusic, pAudioSound, pGameSetSpeed, pWindowSetSize;
+static GFn pInstFind, pVarInstGet, pObjectGetName, pRoomGetName, pRoomGoto, pRoomExists, pInstIdGet;
+typedef void *Inst;
+typedef void *(*FindFn)(int);
+static FindFn pCInstanceFind;
+typedef Inst *(*GetListFn)(int,int,float,float,int**,int*,bool);
+static GetListFn pGetInstList;
+
+static void gml_call(GFn fn, double *args, int argc, RVal *out) {
+    RVal a[4];
+    memset(a, 0, sizeof a);
+    for (int i = 0; i < argc && i < 4; i++) { a[i].v.d = args[i]; a[i].kind = 0; }
+    memset(out, 0, sizeof *out);
+    fn(out, NULL, NULL, argc, a);
+}
+
+static double gml_num1(GFn fn, double x) {
+    RVal out; double a[1] = { x };
+    gml_call(fn, a, 1, &out);
+    return out.v.d;
+}
+
+// --------------------------------------------------------------- input
+static int pending_code[32], pending_left[32], pending_n = 0;
+
+static void gml_key(int code, bool down) {
+    if (!pKeyPress || !pKeyRelease) return;
+    RVal out; double a[1] = { (double)code };
+    gml_call(down ? pKeyPress : pKeyRelease, a, 1, &out);
+}
+
+static unsigned short mac_vk(int code) {
+    switch (code) {
+        case 'A': return 0;  case 'S': return 1;  case 'D': return 2;
+        case 'F': return 3;  case 'G': return 5;  case 'W': return 13;
+        case 13:  return 36; case 32:  return 49; case 27:  return 53;
+        case 38:  return 126; case 40: return 125;
+        case 37:  return 123; case 39: return 124;
+        default:  return (unsigned short)code;
+    }
+}
+
+static void post_ns_event(int code, bool down) {
+    NSString *s = @"x";
+    NSEvent *e = [NSEvent keyEventWithType:(down ? NSEventTypeKeyDown : NSEventTypeKeyUp)
+                                  location:NSZeroPoint modifierFlags:0
+                                 timestamp:[NSProcessInfo processInfo].systemUptime
+                              windowNumber:[[NSApp mainWindow] windowNumber]
+                                   context:nil characters:s charactersIgnoringModifiers:s
+                                  isARepeat:NO keyCode:mac_vk(code)];
+    [NSApp postEvent:e atStart:NO];
+}
+
+static void pump_keys(void) {
+    for (int i = pending_n - 1; i >= 0; i--) {
+        if (--pending_left[i] <= 0) {
+            gml_key(pending_code[i], false);
+            LOG("[keys] f=%d up %d\n", frame, pending_code[i]);
+            for (int j = i; j < pending_n - 1; j++) {
+                pending_code[j] = pending_code[j + 1];
+                pending_left[j] = pending_left[j + 1];
+            }
+            pending_n--;
+        }
+    }
+    FILE *f = fopen(ctl_path("nid_keys"), "r");
+    if (!f) return;
+    char buf[512] = {0};
+    size_t got = fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    FILE *w = fopen(ctl_path("nid_keys"), "w");
+    if (w) fclose(w);
+    if (!got) return;
+    char *p = buf;
+    while (*p && pending_n < 32) {
+        int code = atoi(p);
+        while (*p && *p != '\n') p++;
+        while (*p == '\n') p++;
+        if (code > 0) {
+            gml_key(code, true);
+            post_ns_event(code, true);
+            LOG("[keys] f=%d down %d\n", frame, code);
+            pending_code[pending_n] = code;
+            pending_left[pending_n] = 6;
+            pending_n++;
+        }
+    }
+}
+
+// --------------------------------------------------------------- state probe
+// print every room name once, and honour /tmp/nid_room.txt to jump rooms
+static void probe_rooms(void) {
+    if (!pRoomGetName) return;
+    for (int i = 0; i < 90; i++) {
+        RVal out; double a[1] = { (double)i };
+        gml_call(pRoomGetName, a, 1, &out);
+        const char *nm = NULL;
+        if (out.v.p) { void *q = *(void **)out.v.p; if (q) nm = (const char *)q; }
+        if (nm && (uintptr_t)nm > 0x1000) LOG("[room] %d = %s\n", i, nm);
+    }
+}
+
+
+
+static void pump_size(void) {
+    if (!pWindowSetSize) return;
+    FILE *f = fopen(ctl_path("nid_size"), "r");
+    if (!f) return;
+    char b[64] = {0};
+    size_t n = fread(b, 1, sizeof b - 1, f);
+    fclose(f);
+    FILE *w = fopen(ctl_path("nid_size"), "w"); if (w) fclose(w);
+    if (!n) return;
+    double ww = 0, hh = 0;
+    sscanf(b, "%lf %lf", &ww, &hh);
+    if (ww < 64) ww = 320;
+    if (hh < 48) hh = 200;
+    RVal out; double a[2] = { ww, hh };
+    gml_call(pWindowSetSize, a, 2, &out);
+    LOG("[size] window_set_size(%.0f, %.0f)\n", ww, hh);
+}
+
+static void pump_speed(void) {
+    if (!pGameSetSpeed) return;
+    FILE *f = fopen(ctl_path("nid_speed"), "r");
+    if (!f) return;
+    char b[64] = {0};
+    size_t n = fread(b, 1, sizeof b - 1, f);
+    fclose(f);
+    FILE *w = fopen(ctl_path("nid_speed"), "w"); if (w) fclose(w);
+    if (!n) return;
+    double val = atof(b);
+    if (val < 1) val = 60;
+    RVal out; double a[2] = { val, 0.0 };
+    gml_call(pGameSetSpeed, a, 2, &out);
+    LOG("[speed] game_set_speed(%.0f, fps)\n", val);
+}
+
+static void pump_room_goto(void) {
+    if (!pRoomGoto) return;
+    FILE *f = fopen(ctl_path("nid_room"), "r");
+    if (!f) return;
+    char b[64] = {0};
+    size_t n = fread(b, 1, sizeof b - 1, f);
+    fclose(f);
+    FILE *w = fopen(ctl_path("nid_room"), "w"); if (w) fclose(w);
+    if (!n) return;
+    int idx = atoi(b);
+    LOG("[room] goto %d requested\n", idx);
+    RVal out; double a[1] = { (double)idx };
+    gml_call(pRoomGoto, a, 1, &out);
+    LOG("[room] goto %d done\n", idx);
+}
+
+// GetInstanceListWithEventType null-derefs on some objects mid-match, so every
+// call runs behind a SIGSEGV guard; a fault just abandons that call.
+static int safe_instlist(int obj, int **list, int *n) {
+    *list = NULL; *n = 0;
+    if (!pGetInstList) return 0;
+    int ok = 1;
+    if (sigsetjmp(g_jmp, 1) == 0) {
+        g_guarded = 1;
+        pGetInstList(obj, 0, 0.0f, 0.0f, list, n, false);
+        g_guarded = 0;
+    } else {
+        g_guarded = 0;
+        ok = 0;
+        *list = NULL; *n = 0;
+    }
+    return ok;
+}
+
+static void probe_rv(void) {
+    if (!pObjectGetName) return;
+    RVal out; double a[1] = { 105.0 };
+    gml_call(pObjectGetName, a, 1, &out);
+    const unsigned char *raw = (const unsigned char *)&out;
+    LOG("[rv] bytes:");
+    for (int i = 0; i < 24; i++) LOG(" %02x", raw[i]);
+    LOG("\n");
+    void *cs = out.v.p;
+    LOG("[rv] ptr=%p kind=%u\n", cs, out.kind);
+    if (cs) {
+        void *txt = *(void **)cs;
+        LOG("[rv] *(ptr)=%p text=%s\n", txt, (const char *)txt);
+        // second word of the CString may be the length or a refcount
+        LOG("[rv] cstring words: %p %p %p %p\n",
+            ((void **)cs)[0], ((void **)cs)[1], ((void **)cs)[2], ((void **)cs)[3]);
+    }
+}
+
+static void probe_menu(void) {
+    int *ids = NULL, n = 0;
+    int ok = safe_instlist(102, &ids, &n);   // MainMenu
+    LOG("[m] ok=%d n=%d\n", ok, n);
+    if (!ok || !ids) return;
+    for (int k = 0; k < n && k < 1; k++) {
+        void *p = pCInstanceFind ? pCInstanceFind(ids[k]) : NULL;
+        if (!p) { LOG("[m] no ptr\n"); return; }
+        const int *iv = (const int *)p;
+        LOG("[m] ints:");
+        for (int j = 0; j < 96; j++) LOG(" %d", iv[j]);
+        LOG("\n");
+        const float *fv = (const float *)p;
+        LOG("[m] floats:");
+        for (int j = 0; j < 48; j++) LOG(" %.2f", fv[j]);
+        LOG("\n");
+    }
+}
+
+static void probe_fighters(void) {
+    int objs[6] = {105, 154, 242, 153, 241, 106};  // Man, Orange/Yellow players+weapons, Match
+    for (int i = 0; i < 6; i++) {
+        int *ids = NULL, n = 0;
+        int ok = safe_instlist(objs[i], &ids, &n);
+        LOG("[f] f=%d obj=%d ok=%d n=%d\n", frame, objs[i], ok, n);
+        if (!ok || !ids || n <= 0) continue;
+        for (int k = 0; k < n && k < 2; k++) {
+            void *p = pCInstanceFind ? pCInstanceFind(ids[k]) : NULL;
+            LOG("[f] f=%d obj=%d k=%d id=0x%x ptr=%p\n", frame, objs[i], k, ids[k], p);
+            if (!p) continue;
+            const float *fl = (const float *)p;
+            LOG("[f] f=%d obj=%d k=%d fl:", frame, objs[i], k);
+            for (int j = 0; j < 20; j++) LOG(" %.2f", fl[j]);
+            LOG("\n");
+            const double *db = (const double *)p;
+            LOG("[f] f=%d obj=%d k=%d db:", frame, objs[i], k);
+            for (int j = 0; j < 8; j++) LOG(" %.2f", db[j]);
+            LOG("\n");
+        }
+    }
+}
+
+
+
+static void probe_vars(void) {
+    if (!pInstNumber || !pInstFind || !pCInstanceFind) return;
+    // instance_count: walk every object, then instance_find -> id -> CInstance*
+    for (int obj = 1; obj <= 246; obj++) {
+        double n = gml_num1(pInstNumber, (double)obj);
+        if (n < 0.5) continue;
+        for (int k = 0; k < (int)n && k < 2; k++) {
+            RVal out; double a[2] = { (double)obj, (double)k };
+            gml_call(pInstFind, a, 2, &out);
+            LOG("[pv] obj=%d k=%d find_ret=%.0f kind=%u\n", obj, k, out.v.d, out.kind);
+            long long id = (long long)out.v.d;
+            if (id <= 0) continue;
+            void *p = pCInstanceFind((int)id);
+            LOG("[pv] obj=%d id=0x%llx ptr=%p\n", obj, id, p);
+            if (!p) continue;
+            const float *f = (const float *)p;
+            for (int i = 0; i < 12; i++) LOG("[pv] f[%d]=%.3f\n", i, f[i]);
+        }
+    }
+    // also try instance_id(index)
+    for (int i = 0; i < 6; i++) {
+        RVal out; double a[1] = { (double)i };
+        gml_call(pInstIdGet, a, 1, &out);
+        LOG("[pv] instance_id(%d)=%.0f\n", i, out.v.d);
+    }
+}
+
+static void probe_names(void) {
+    if (!pObjectGetName) return;
+    for (int obj = 1; obj <= 246; obj++) {
+        double n = gml_num1(pInstNumber, (double)obj);
+        if (n < 0.5) continue;
+        RVal out; double a[1] = { (double)obj };
+        gml_call(pObjectGetName, a, 1, &out);
+        const char *direct = (const char *)out.v.p;
+        const char *deref = NULL;
+        if (out.v.p) { void *q = *(void **)out.v.p; if (q) deref = (const char *)q; }
+        LOG("[name] obj=%d kind=%u ptr=%p direct=%s deref=%s\n", obj, out.kind,
+            out.v.p, (direct && (uintptr_t)direct > 0x1000) ? direct : "?",
+            (deref && (uintptr_t)deref > 0x1000) ? deref : "?");
+    }
+}
+
+static void probe_instances(void) {
+    if (!pInstNumber) return;
+    int total = 0;
+    for (int obj = 1; obj <= 246; obj++) {
+        double n = gml_num1(pInstNumber, (double)obj);
+        if (n < 0.5) continue;
+        total += (int)n;
+        LOG("[num] f=%d obj=%d count=%.0f\n", frame, obj, n);
+    }
+    LOG("[num] f=%d TOTAL=%d\n", frame, total);
+}
+
+// --------------------------------------------------------------- quiet window
+
+// ---- Keep the game "focused" while invisible: a GM runner pauses itself when
+// its window loses key status, which silently freezes the simulation.
+static BOOL (*orig_isKeyWindow)(id, SEL);
+static BOOL my_isKeyWindow(id self, SEL _cmd) { return YES; }
+static BOOL (*orig_isMainWindow)(id, SEL);
+static BOOL my_isMainWindow(id self, SEL _cmd) { return YES; }
+static BOOL (*orig_isActive)(id, SEL);
+static BOOL my_isActive(id self, SEL _cmd) { return YES; }
+
+
+// GM positions its own window (and does so after we move it). Pin the origin at the
+// single setter that matters, with a recursion guard: setFrame: calls
+// setFrameOrigin: internally, and swizzling both recursed until the stack died.
+static BOOL g_nid_quiet = NO;
+static __thread int g_in_frame_hook = 0;
+static void (*orig_setFrameOrigin)(id, SEL, NSPoint);
+
+static void my_setFrameOrigin(id self, SEL _cmd, NSPoint o) {
+    if (g_nid_quiet && !g_in_frame_hook) {
+        g_in_frame_hook = 1;
+        NSSize sz = [(NSWindow *)self frame].size;
+        orig_setFrameOrigin(self, _cmd, NSMakePoint(-(sz.width + 400), -4000));
+        g_in_frame_hook = 0;
+        return;
+    }
+    if (orig_setFrameOrigin) orig_setFrameOrigin(self, _cmd, o);
+}
+
+static void (*orig_makeKeyAndOrderFront)(id, SEL, id);
+static void my_makeKeyAndOrderFront(id self, SEL _cmd, id sender) {
+    if (orig_makeKeyAndOrderFront) orig_makeKeyAndOrderFront(self, _cmd, sender);
+}
+
+// Called from the frame tick: once the runner is definitely alive, park the
+// window offscreen and make it nearly invisible. Done once, never repeated.
+static void relocate_once(void) {
+    if (installed_quiet) return;
+    for (NSWindow *w in [NSApp windows]) {
+        if (![NSStringFromClass([w class]) containsString:@"GMWindow"]) continue;
+        NSSize sz = [w frame].size;
+        [w setAlphaValue:1.0];
+        [w setFrameOrigin:NSMakePoint(-(sz.width - 40), 0)];
+        LOG("[quiet] relocated window offscreen (%.0fx%.0f)\n", sz.width, sz.height);
+        installed_quiet = 1;
+    }
+}
+
+static void (*orig_activate)(id, SEL, BOOL);
+static void my_activate(id self, SEL _cmd, BOOL flag) { (void)self; (void)_cmd; (void)flag; }
+
+static void (*orig_toggleFullScreen)(id, SEL, id);
+static void my_toggleFullScreen(id self, SEL _cmd, id sender) {
+    if ([(NSWindow *)self styleMask] & NSWindowStyleMaskFullScreen) {
+        LOG("[quiet] leaving fullscreen\n");
+        if (orig_toggleFullScreen) orig_toggleFullScreen(self, _cmd, sender);
+    } else {
+        LOG("[quiet] blocked fullscreen\n");
+    }
+}
+
+// --------------------------------------------------------------- frame tick
+static void tick_main(void) {
+    frame++;
+    pump_keys();
+    if (frame == 2) LOG("[tick] running on main thread\n");
+    if (!installed_quiet && frame % 20 == 0) relocate_once();
+    if (frame % 30 == 0) {
+        if (pAudioMaster) gml_num1(pAudioMaster, 0.0);
+        if (pAudioMusic)  gml_num1(pAudioMusic, 0.0);
+        if (pAudioSound)  gml_num1(pAudioSound, 0.0);
+    }
+    if (frame % 120 == 0) {
+        for (NSWindow *w in [NSApp windows]) {
+            if (![NSStringFromClass([w class]) containsString:@"GMWindow"]) continue;
+            LOG("[win] %d f=%d\n", [[NSNumber numberWithInteger:[w windowNumber]] intValue], frame);
+            break;
+        }
+    }
+    if (frame % 600 == 0) LOG("[tick] f=%d\n", frame);
+    if (frame == 30 && pAudioMaster) gml_num1(pAudioMaster, 0.0);
+    if (getenv("NID_SCAN") && frame > 60 && frame % 300 == 1) { probe_instances(); }
+    if (getenv("NID_NAMES") && frame % 60 == 10) probe_names();
+    if (getenv("NID_FIGHTERS") && frame % 15 == 5) probe_fighters();
+    if (getenv("NID_MENU") && frame % 45 == 20) probe_menu();
+    if (getenv("NID_RV") && frame == 260) probe_rv();
+    if (getenv("NID_ROOMS") && frame == 200) probe_rooms();
+    if (frame % 20 == 0) pump_room_goto();
+    if (frame % 30 == 0) pump_speed();
+    if (frame % 25 == 0) pump_size();
+}
+
+static void (*orig_flushBuffer)(id, SEL);
+static void my_flushBuffer(id self, SEL _cmd) {
+    @autoreleasepool { tick_main(); }
+    if (orig_flushBuffer) orig_flushBuffer(self, _cmd);
+}
+
+
+// Probe from a second thread: the render thread may be inside a rollback sandbox
+// where the instance list is empty.
+static void *thread_probe(void *arg) {
+    (void)arg;
+    int tick = 0;
+    for (;;) {
+        usleep(25000);
+        if (!pInstNumber) continue;
+        tick++;
+        int n = (int)gml_num1(pInstNumber, 105.0);
+        if (n <= 0) continue;
+        if (tick % 40 == 0) {
+            for (int ev = -1; ev <= 1; ev++) {
+                int *L = NULL; int cnt = -1;
+                int ok = 1;
+                if (sigsetjmp(g_jmp, 1) == 0) {
+                    g_guarded = 1;
+                    pGetInstList(105, ev, 0.0f, 0.0f, &L, &cnt, false);
+                    g_guarded = 0;
+                } else { g_guarded = 0; ok = 0; cnt = -2; }
+                LOG("[mx] ev=%d ok=%d cnt=%d ptr=%p\n", ev, ok, cnt, (void *)L);
+            }
+        }
+        for (int k = 0; k < n && k < 2; k++) {
+            RVal out; double a[2] = { 105.0, (double)k };
+            gml_call(pInstFind, a, 2, &out);
+            { RVal o2; double b[1] = { (double)k }; gml_call(pInstIdGet, b, 1, &o2);
+              LOG("[idg] t=%d k=%d instance_id=%.0f\n", tick, k, o2.v.d); }
+            long long id = (long long)out.v.d;
+            void *p = (id > 0 && pCInstanceFind) ? pCInstanceFind((int)id) : NULL;
+            LOG("[man] t=%d k=%d n=%d find=%.0f kind=%u id=%lld ptr=%p\n",
+                tick, k, n, out.v.d, out.kind, id, p);
+            if (!p) continue;
+            const float *fl = (const float *)p;
+            const double *db = (const double *)p;
+            LOG("[man]   fl=[");
+            for (int j = 0; j < 16; j++) LOG(" %.2f", fl[j]);
+            LOG(" ] db=[");
+            for (int j = 0; j < 8; j++) LOG(" %.2f", db[j]);
+            LOG(" ]\n");
+        }
+    }
+    return NULL;
+}
+
+#include <mach/mach.h>
+
+static void log_hooked(void *self, void *other, void *ret, long argc, void *args) {
+    g_hook_calls++;
+    if (g_hook_calls % 30 != 0 || !self) return;
+    const float *fl = (const float *)self;
+    const double *db = (const double *)self;
+    LOG("[hk] n=%d self=%p other=%p fl=[", g_hook_calls, self, other);
+    for (int j = 0; j < 20; j++) LOG(" %.2f", fl[j]);
+    LOG(" ] db=[");
+    for (int j = 0; j < 10; j++) LOG(" %.2f", db[j]);
+    LOG(" ]\n");
+}
+
+__attribute__((constructor)) static void init_hook(void) {
+    if (getenv("NID_ID")) { strncpy(g_id, getenv("NID_ID"), sizeof g_id - 1); g_id[sizeof g_id - 1] = 0; }
+    LOG("[hook] loaded pid %d id=%s\n", getpid(), g_id);
+    if (getenv("NID_HOOK")) {
+        void *fn = symaddr(0x100153df0ULL, "gml_Script_actionStateMachine");
+        install_hook(fn, "actionStateMachine");
+    }
+    if (getenv("NID_THREAD")) { pthread_t t; pthread_create(&t, NULL, thread_probe, NULL); }
+    install_segv_guard();
+    pInstNumber   = (GFn)symaddr(0x100b3b364ULL, "F_InstanceNumber");
+    pInstExists   = (GFn)symaddr(0x100b3b090ULL, "F_InstanceExists");
+    pKeyPress     = (GFn)symaddr(0x100b0ccd8ULL, "F_KeyboardKeyPress");
+    pKeyRelease   = (GFn)symaddr(0x100b0ccf4ULL, "F_KeyboardKeyRelease");
+    pAudioMaster  = (GFn)symaddr(0x100b93c6cULL, "F_AudioSetMasterGain");
+    pAudioMusic   = (GFn)symaddr(0x100b93ea0ULL, "F_AudioMusicGain");
+    pAudioSound   = (GFn)symaddr(0x100b93ec0ULL, "F_AudioSoundGain");
+    pInstFind     = (GFn)symaddr(0x100b3afb0ULL, "F_InstanceFind");
+    pGameSetSpeed = (GFn)symaddr(0x100b77a88ULL, "F_GameSetSpeed");
+    pWindowSetSize = (GFn)symaddr(0x100b40bc0ULL, "F_WindowSetSize");
+    pObjectGetName= (GFn)symaddr(0x100b84d5cULL, "F_ObjectGetName");
+    pRoomGetName  = (GFn)symaddr(0x100b8578cULL, "F_RoomGetName");
+    pRoomGoto     = (GFn)symaddr(0x100b3dcc4ULL, "F_RoomGoto");
+    pRoomExists   = (GFn)symaddr(0x100b85734ULL, "F_RoomExists");
+    pInstIdGet    = (GFn)symaddr(0x100b3c71cULL, "F_InstanceIdGet");
+    pCInstanceFind= (FindFn)symaddr(0x100ae7bacULL, "CInstance::Find");
+    pGetInstList  = (GetListFn)symaddr(0x100ca0b18ULL, "GetInstanceListWithEventType");
+    pVarInstGet   = (GFn)symaddr(0x100b71d88ULL, "F_VariableInstanceGet");
+
+    Class ctx = NSClassFromString(@"NSOpenGLContext");
+    Method fb = ctx ? class_getInstanceMethod(ctx, @selector(flushBuffer)) : NULL;
+    if (fb) {
+        orig_flushBuffer = (void (*)(id, SEL))method_getImplementation(fb);
+        method_setImplementation(fb, (IMP)my_flushBuffer);
+        LOG("[gl] hooked flushBuffer\n");
+    }
+
+    if (getenv("NID_QUIET")) {
+    Class win = NSClassFromString(@"GMWindow");
+    if (win) {
+        Method mk = class_getInstanceMethod(win, @selector(makeKeyAndOrderFront:));
+        if (mk) {
+            orig_makeKeyAndOrderFront = (void (*)(id, SEL, id))method_getImplementation(mk);
+            method_setImplementation(mk, (IMP)my_makeKeyAndOrderFront);
+            LOG("[quiet] hooked makeKeyAndOrderFront:\n");
+        }
+        Method tf = class_getInstanceMethod(win, @selector(toggleFullScreen:));
+        if (tf) {
+            orig_toggleFullScreen = (void (*)(id, SEL, id))method_getImplementation(tf);
+            method_setImplementation(tf, (IMP)my_toggleFullScreen);
+            LOG("[quiet] hooked toggleFullScreen:\n");
+        }
+    }
+
+    if (getenv("NID_FOCUS")) {
+        Class wc = NSClassFromString(@"NSWindow");
+        Method k = wc ? class_getInstanceMethod(wc, @selector(isKeyWindow)) : NULL;
+        if (k) { orig_isKeyWindow = (BOOL (*)(id, SEL))method_getImplementation(k);
+                 method_setImplementation(k, (IMP)my_isKeyWindow); LOG("[focus] isKeyWindow -> YES\n"); }
+        Method mw = wc ? class_getInstanceMethod(wc, @selector(isMainWindow)) : NULL;
+        if (mw) { orig_isMainWindow = (BOOL (*)(id, SEL))method_getImplementation(mw);
+                  method_setImplementation(mw, (IMP)my_isMainWindow); LOG("[focus] isMainWindow -> YES\n"); }
+        Class a = NSClassFromString(@"NSApplication");
+        Method a2 = a ? class_getInstanceMethod(a, @selector(isActive)) : NULL;
+        if (a2) { orig_isActive = (BOOL (*)(id, SEL))method_getImplementation(a2);
+                  method_setImplementation(a2, (IMP)my_isActive); LOG("[focus] isActive -> YES\n"); }
+    }
+
+    Class app = NSClassFromString(@"NSApplication");
+    Method ac = app ? class_getInstanceMethod(app, @selector(activateIgnoringOtherApps:)) : NULL;
+    if (ac) {
+        orig_activate = (void (*)(id, SEL, BOOL))method_getImplementation(ac);
+        method_setImplementation(ac, (IMP)my_activate);
+        LOG("[quiet] hooked activateIgnoringOtherApps:\n");
+    }
+    }
+}

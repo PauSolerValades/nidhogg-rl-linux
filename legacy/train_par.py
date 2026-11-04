@@ -1,0 +1,141 @@
+"""Parallel GA on the real game.
+
+Several Nidhogg instances run at once (each its own window, key channel and log).
+An "individual" is a small parametric policy; it plays a fixed wall-clock window
+inside a live match, and its fitness comes from the deaths we can observe:
+
+    +3 for each of the CPU's deaths, -2 for each of ours
+
+Windows (not rounds) are the episode unit: rounds restart by themselves, so a
+window spans several of them and needs no boundary detection.
+
+Run:  python train_par.py --gens 4 --pop 4 --window 45
+"""
+import argparse
+import json
+import os
+import random
+import time
+
+import numpy as np
+
+import agent as A
+import nav
+import perceive
+
+OBS = "/tmp/nid_obs_{}.json"
+
+
+def read_obs(iid):
+    try:
+        with open(OBS.format(iid)) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+SEQ = [13, 13, 38, 13, 40, 13, 13, 13, 13]   # cold boot -> training match
+
+
+def stats_screen(img):
+    r, g, b = img[:, :, 0].astype(int), img[:, :, 1].astype(int), img[:, :, 2].astype(int)
+    cyan = (b > 190) & (g > 170) & (r < 120)
+    H = img.shape[0]
+    band = cyan[int(H * 0.62):int(H * 0.72), :]
+    white = ((r > 200) & (g > 200) & (b > 200))[int(H * 0.80):int(H * 0.90), :]
+    return band.sum() > 400 and white.sum() > 150 and img.mean() < 60
+
+
+def reenter_match(iid, log=print):
+    log(f"  [recover] instance {iid}: running match-entry sequence")
+    for k in SEQ:
+        nav.press_instance(k, iid, wait=0.05)
+        time.sleep(1.2)
+
+LOG = "/tmp/nid_train_par.jsonl"
+
+
+def run_individual(iid, params, seconds, rng, sample=0.10):
+    """Play one window on instance `iid`. Returns a record with a position trace."""
+    t0 = time.time()
+    trace = []
+    last_seen = time.time()
+    base = read_obs(iid) or {}
+    b_mine = base.get("my_deaths", 0)
+    b_theirs = base.get("their_deaths", 0)
+    mine = theirs = 0
+    while time.time() - t0 < seconds:
+        obs = read_obs(iid)
+        if obs is None:
+            time.sleep(0.05)
+            continue
+        now = time.time()
+        if obs["p1"] is not None or obs["p2"] is not None:
+            last_seen = now
+        elif now - last_seen > 6.0:                     # stuck in a menu
+            reenter_match(iid)
+            last_seen = now
+            base = read_obs(iid) or {}
+            b_mine = base.get("my_deaths", 0)
+            b_theirs = base.get("their_deaths", 0)
+            continue
+        trace.append([round(now - t0, 2),
+                      None if obs["p1"] is None else round(obs["p1"]),
+                      None if obs["p2"] is None else round(obs["p2"])])
+        nav.press_instance(A.act(params, obs, rng), iid, wait=0.0)
+        time.sleep(sample)
+    final = read_obs(iid) or {}
+    mine = final.get("my_deaths", 0) - b_mine
+    theirs = final.get("their_deaths", 0) - b_theirs
+    return {"fitness": 3.0 * theirs - 2.0 * mine,
+            "my_deaths": mine, "their_deaths": theirs,
+            "params": params, "trace": trace, "seconds": round(time.time() - t0, 1)}
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--gens", type=int, default=4)
+    ap.add_argument("--pop", type=int, default=4)
+    ap.add_argument("--window", type=float, default=45.0)
+    ap.add_argument("--seed", type=int, default=11)
+    args = ap.parse_args()
+
+    wids = nav.instance_wids()
+    if not wids:
+        raise SystemExit("no game instances found (start some with NID_ID=<n>)")
+    ids = sorted(wids)
+    print(f"instances: {ids}", flush=True)
+
+    rng = random.Random(args.seed)
+    pop = [A.rand_params(rng) for _ in range(args.pop)]
+
+    for gen in range(args.gens):
+        results = []
+        # round-robin the population over the instances, one individual at a time
+        for n, params in enumerate(pop):
+            iid = ids[n % len(ids)]
+            rec = run_individual(iid, params, args.window, random.Random(args.seed + gen * 97 + n))
+            rec["tag"] = f"g{gen}i{n}"
+            rec["instance"] = iid
+            results.append(rec)
+            with open(LOG, "a") as f:
+                f.write(json.dumps(rec) + "\n")
+            print(f"gen {gen} ind {n} (inst {iid}): fit={rec['fitness']:.1f} "
+                  f"their={rec['their_deaths']} mine={rec['my_deaths']}", flush=True)
+
+        results.sort(key=lambda r: -r["fitness"])
+        best = results[0]
+        mean = float(np.mean([r["fitness"] for r in results]))
+        print(f"== gen {gen} best {best['fitness']:.1f} mean {mean:.1f}", flush=True)
+
+        elite = [r["params"] for r in results[: max(2, args.pop // 3)]]
+        nxt = list(elite)
+        while len(nxt) < args.pop:
+            a, b = rng.sample(elite, 2) if len(elite) > 1 else (elite[0], elite[0])
+            nxt.append(A.mutate(A.crossover(a, b, rng), rng))
+        pop = nxt
+
+    print("best params:", json.dumps(best["params"]), flush=True)
+
+
+if __name__ == "__main__":
+    main()

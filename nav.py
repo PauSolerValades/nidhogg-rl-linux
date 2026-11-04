@@ -1,0 +1,186 @@
+"""Read Nidhogg's menus from the window image (no OCR): find the text rows and
+which one is highlighted, then press keys to move the selection.
+
+With several game instances running, each publishes its own window number
+(`[win] <n>` in /tmp/nid_inject_<id>.log) and has its own key channel
+(/tmp/nid_keys_<id>.txt), so capture and input are per-instance.
+"""
+import glob
+import re
+import time
+import numpy as np
+import Quartz
+
+KEYS = "/tmp/nid_keys.txt"
+
+
+def keys_path(iid=None):
+    return "/tmp/nid_keys.txt" if iid is None else f"/tmp/nid_keys_{iid}.txt"
+
+
+def _grab(wid, timeout=3):
+    """Capture one window by id.
+
+    CGWindowListCreateImage intermittently blocks forever while other processes are
+    also capturing, which stalls a training loop. `screencapture -l` is a separate
+    process, so it can be given a hard timeout.
+    """
+    import subprocess
+    from PIL import Image
+    tmp = f"/tmp/_cap_{wid}.png"
+    try:
+        subprocess.run(["screencapture", "-x", "-l", str(int(wid)), tmp],
+                       timeout=timeout, check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return np.array(Image.open(tmp).convert("RGB"))
+    except Exception:
+        return _grab_quartz(wid)
+
+
+def _grab_quartz(wid):
+    img = Quartz.CGWindowListCreateImage(Quartz.CGRectNull,
+                                         Quartz.kCGWindowListOptionIncludingWindow,
+                                         int(wid), Quartz.kCGWindowImageBoundsIgnoreFraming)
+    if not img:
+        return None
+    w, h = Quartz.CGImageGetWidth(img), Quartz.CGImageGetHeight(img)
+    data = Quartz.CGDataProviderCopyData(Quartz.CGImageGetDataProvider(img))
+    return np.frombuffer(data, dtype=np.uint8).reshape(
+        h, Quartz.CGImageGetBytesPerRow(img) // 4, 4)[:, :w, :3]
+
+
+def instance_wids():
+    """{instance_id: window_number} for every running instance that has published one."""
+    out = {}
+    for path in glob.glob("/tmp/nid_inject_*.log"):
+        iid = re.search(r"nid_inject_(\w+)\.log$", path)
+        if not iid:
+            continue
+        try:
+            data = open(path, "rb").read().decode("utf-8", "replace")
+        except OSError:
+            continue
+        hits = re.findall(r"\[win\] (\d+)", data)
+        if hits:
+            out[iid.group(1)] = int(hits[-1])
+    return out
+
+
+def capture_instance(iid):
+    wid = instance_wids().get(str(iid))
+    if wid is None:
+        return None
+    return _grab(wid)
+
+
+def press_instance(code, iid=None, wait=0.05):
+    open(keys_path(iid), "w").write(f"{code}\n")
+    time.sleep(wait)
+
+
+def capture():
+    cands = []
+    for w in Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionAll,
+                                               Quartz.kCGNullWindowID):
+        if "nidhogg" not in str(w.get("kCGWindowOwnerName", "")).lower():
+            continue
+        b = w.get("kCGWindowBounds") or {}
+        wd, ht = int(b.get("Width", 0)), int(b.get("Height", 0))
+        if wd > 500 and ht > 400:          # the game view, not overlay strips
+            cands.append((wd * ht, w))
+    cands.sort(key=lambda t: -t[0])
+    wins = [w for _, w in cands]
+    if not wins:
+        return None
+    return _grab(int(wins[0]["kCGWindowNumber"]))
+
+
+def menu_rows(img):
+    """Find menu text rows and the highlighted one.
+
+    The selected row is drawn on a filled grey bar, so we look for the row whose
+    background is both brighter than its neighbours and wide (a full-width bar).
+    """
+    H, W = img.shape[:2]
+    r, gg, b = img[:, :, 0], img[:, :, 1], img[:, :, 2]
+    # menu glyphs are white/near-grey; the logo is cyan, so require all channels high
+    white = (r > 175) & (gg > 175) & (b > 175) & (np.abs(r.astype(int) - b.astype(int)) < 40)
+    x0, x1 = int(W * 0.26), int(W * 0.76)
+    band = white[:, x0:x1]
+    text = band.sum(axis=1)
+    bg = img[:, x0:x1, :].mean(axis=2).mean(axis=1)
+
+    rows, cur = [], None
+    for y in range(int(H * 0.25), int(H * 0.95)):
+        if text[y] > 6:
+            if cur is None:
+                cur = [y, y]
+            else:
+                if y - cur[1] <= 8:
+                    cur[1] = y
+                else:
+                    if cur[1] - cur[0] >= 8: rows.append(tuple(cur))
+                    cur = [y, y]
+        else:
+            if cur is not None and cur[1] - cur[0] >= 8:
+                rows.append(tuple(cur))
+            cur = None
+    if cur is not None and cur[1] - cur[0] >= 8:
+        rows.append(tuple(cur))
+    if not rows:
+        return []
+
+    # the bar sits behind one row: score each row by its background brightness
+    scored = []
+    for (a, b) in rows:
+        lo, hi = max(0, a - 3), min(H - 1, b + 3)
+        scored.append(float(bg[lo:hi].mean()))
+    mx = max(scored)
+    sel = scored.index(mx) if mx > 30 else -1
+    return [((a + b) // 2, scored[i], i == sel) for i, (a, b) in enumerate(rows)]
+
+
+def stable_screen(samples=3, delay=0.45):
+    """Read the screen repeatedly and only report when the row count is stable."""
+    last = None
+    for _ in range(samples * 3):
+        img = capture()
+        if img is None:
+            time.sleep(delay); continue
+        rows = menu_rows(img)
+        n = len(rows)
+        sel = next((i for i, (_, _, s) in enumerate(rows) if s), -1)
+        if last == (n, sel) and n >= 2:
+            return n, sel, img
+        last = (n, sel)
+        time.sleep(delay)
+    return (len(rows) if 'rows' in dir() else 0), -1, img
+
+
+def selected_index(img):
+    rows = menu_rows(img)
+    for i, (_, _, is_sel) in enumerate(rows):
+        if is_sel:
+            return i, len(rows)
+    return -1, len(rows)
+
+
+def press(code, wait=0.9):
+    open(KEYS, "w").write(f"{code}\n")
+    time.sleep(wait)
+
+
+def goto_item(target, max_rows=12, wait=0.8):
+    """Move the highlighted row to `target` using arrows, then report the result."""
+    for _ in range(max_rows):
+        img = capture()
+        if img is None:
+            return None
+        idx, n = selected_index(img)
+        if idx < 0 or n == 0:
+            time.sleep(0.5)
+            continue
+        if idx == target:
+            return idx, n
+        press(40 if idx < target else 38, wait)   # down : up
+    return selected_index(capture())

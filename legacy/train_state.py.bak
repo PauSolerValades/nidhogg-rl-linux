@@ -1,0 +1,500 @@
+"""Episode-managed GA on Nidhogg's real published game state (no vision).
+
+One owned game instance publishes:
+    /tmp/nid_state_0.txt -> p154x p154y p242x p242y have154 have242
+Object 242 is our YellowPlayer; object 154 is the OrangePlayer CPU.
+
+Before and during every individual the episode manager keeps the game in a live
+match. Missing fighters / the WINNER stats screen are dismissed with Enter and
+the verified match-entry path is replayed. A dead process or stale state file
+causes that one instance to be relaunched.
+
+Usage:
+    .venv/bin/python train_state.py --gens 6 --pop 8 --window 25 --seed 23
+"""
+import argparse
+import json
+import os
+import random
+import shutil
+import signal
+import statistics
+import subprocess
+import time
+
+import agent as A
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+APP = "/Users/ruggsea/Library/Application Support/Steam/steamapps/common/Nidhogg/Nidhogg.app/Contents/MacOS/Nidhogg"
+DYLD = os.path.join(HERE, "hook", "inject.dylib")
+PREFS = os.path.expanduser("~/Library/Application Support/com.messhof.nidhogg/prefs.ini")
+MUTED_PREFS = os.path.join(HERE, "prefs_muted.ini")
+PRISTINE_PREFS = os.path.join(HERE, "prefs_pristine.ini")
+
+STATE = "/tmp/nid_state_{}.txt"
+KEYS = "/tmp/nid_keys_{}.txt"
+OUT_LOG = "/tmp/nid_out_i{}.log"
+LOG_PATH = "/tmp/nid_train_state.jsonl"
+SUMMARY_PATH = "/tmp/nid_train_state_summary.json"
+BEST_PATH = "/tmp/nid_best_params.json"
+
+SPAWN_JUMP = 300.0
+MISSING_MATCH_OVER = 1.5
+FROZEN_MATCH_OVER = 6.0
+STATE_STALE = 5.0
+BOOT_WAIT = 16.0
+MATCH_READY_TIMEOUT = 20.0
+RUN_BUDGET = 40 * 60.0
+
+# 8x Up (0.3 s apart), then Down/Enter with the verified waits.
+ENTRY = [(38, 0.3)] * 8 + [
+    (40, 1.0), (13, 2.5), (40, 1.5), (13, 2.5),
+    (13, 2.5), (13, 3.0), (13, 4.0),
+]
+
+
+def log(message):
+    print(f"[{time.strftime('%H:%M:%S')}] {message}", flush=True)
+
+
+def atomic_json(path, value):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(value, f, indent=2, sort_keys=True)
+        f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+class InstanceManager:
+    """Own exactly one game process and keep it inside a playable match."""
+
+    def __init__(self, iid=0):
+        self.iid = iid
+        self.proc = None
+        self.out = None
+        self.started_at = 0.0
+        self.ever_have_players = False
+        self.current_tag = None
+        self.match_recoveries = 0
+        self.hard_restarts = 0
+        self.recovery_episodes = set()
+        self.restart_episodes = set()
+
+    def _note_recovery(self):
+        if self.current_tag:
+            self.recovery_episodes.add(self.current_tag)
+
+    def _note_restart(self):
+        if self.current_tag:
+            self.restart_episodes.add(self.current_tag)
+
+    def clean_files(self):
+        for path in (STATE.format(self.iid), KEYS.format(self.iid)):
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+
+    def alive(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def launch(self):
+        self.clean_files()
+        self.out = open(OUT_LOG.format(self.iid), "w")
+        self.proc = subprocess.Popen(
+            [APP],
+            env=dict(
+                os.environ,
+                NID_ID=str(self.iid),
+                SteamAppId="94400",
+                NID_QUIET="1",
+                NID_FOCUS="1",
+                NID_MAN="1",
+                NID_THREAD="1",
+                DYLD_INSERT_LIBRARIES=DYLD,
+            ),
+            stdout=self.out,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        self.started_at = time.monotonic()
+        self.ever_have_players = False
+        log(f"instance {self.iid}: launched pid {self.proc.pid}")
+
+    def close(self):
+        proc = self.proc
+        if proc is not None and proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+        if proc is not None:
+            try:
+                proc.wait(timeout=3)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+        if self.out is not None:
+            self.out.close()
+            self.out = None
+        self.proc = None
+
+    def read_state(self):
+        """Return (state-or-None, stale). A state can have have154/have242 == 0."""
+        try:
+            path = STATE.format(self.iid)
+            stale = time.time() - os.path.getmtime(path) > STATE_STALE
+            with open(path) as f:
+                vals = f.read().split()
+            if len(vals) < 6:
+                return None, stale
+            o154x, o154y, p242x, p242y, h154, h242 = (float(v) for v in vals[:6])
+            return {
+                "them_x": o154x, "them_y": o154y,
+                "me_x": p242x, "me_y": p242y,
+                "have154": int(h154), "have242": int(h242),
+            }, stale
+        except (OSError, ValueError):
+            return None, True
+
+    @staticmethod
+    def has_players(st):
+        return st is not None and st["have154"] and st["have242"]
+
+    def press(self, code):
+        if isinstance(code, tuple):
+            for part in code:
+                with open(KEYS.format(self.iid), "w") as f:
+                    f.write(f"{part}\n")
+                time.sleep(0.03)
+            return
+        with open(KEYS.format(self.iid), "w") as f:
+            f.write(f"{code}\n")
+
+    def run_entry(self):
+        log(f"instance {self.iid}: match-entry path")
+        for code, wait in ENTRY:
+            self.press(code)
+            time.sleep(wait)
+
+    def wait_for_match(self, timeout=MATCH_READY_TIMEOUT):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not self.alive():
+                return False
+            st, stale = self.read_state()
+            if not stale and self.has_players(st):
+                self.ever_have_players = True
+                return True
+            time.sleep(0.25)
+        return False
+
+    def restart(self, reason):
+        """Hard restart of the owned game; returns whether a match was reached."""
+        self.hard_restarts += 1
+        self._note_restart()
+        self._note_recovery()
+        log(f"instance {self.iid}: HARD RESTART ({reason})")
+        self.close()
+        time.sleep(1.0)
+        self.launch()
+        time.sleep(BOOT_WAIT)
+        self.run_entry()
+        ok = self.wait_for_match()
+        if ok:
+            log(f"instance {self.iid}: hard restart recovered a live match")
+        return ok
+
+    def recover_match(self):
+        """Dismiss WINNER/stats and replay entry; hard-restart only if needed."""
+        self.match_recoveries += 1
+        self._note_recovery()
+        log(f"instance {self.iid}: match recovery (Enter + entry path)")
+        self.press(13)
+        time.sleep(2.5)
+        self.run_entry()
+        if self.wait_for_match():
+            log(f"instance {self.iid}: match recovery succeeded")
+            return True
+        return self.restart("match re-entry failed")
+
+    def ensure_match(self):
+        """Called before each individual. Never leaves a dead game running."""
+        for attempt in range(2):
+            st, stale = self.read_state()
+            if self.alive() and not stale and self.has_players(st):
+                self.ever_have_players = True
+                return True
+            if not self.alive():
+                if self.restart("process dead before individual"):
+                    return True
+                continue
+            uptime = time.monotonic() - self.started_at
+            if uptime < BOOT_WAIT:
+                time.sleep(BOOT_WAIT - uptime)
+            if self.ever_have_players:
+                if self.recover_match():
+                    return True
+            else:
+                self.run_entry()
+                if self.wait_for_match():
+                    return True
+                if self.restart(f"initial entry failed (attempt {attempt + 1})"):
+                    return True
+        log(f"instance {self.iid}: unable to obtain a match")
+        return False
+
+
+def act(params, st, rng):
+    dx = st["them_x"] - st["me_x"]
+    toward = 68 if dx > 0 else 65       # D / A
+    away = 65 if dx > 0 else 68
+    if abs(dx) > params["engage"]:
+        if rng.random() < params["jump"]:
+            return 71                    # G = jump
+        return toward
+    if rng.random() < params["aggr"]:
+        aim = {0: 83, 1: 87, 2: 87}[params["aim"]]
+        return aim, 70                   # aim, then F = attack
+    if rng.random() < params["retreat"]:
+        return away
+    return 87 if params["aim"] >= 1 else 83
+
+
+def run_individual(mgr, params, seconds, seed, tag):
+    """Run 25 s of actual control; recovery time does not consume the window."""
+    rng = random.Random(seed)
+    deadline = time.monotonic() + seconds
+    trace = []
+    mine = theirs = 0
+    prev = None
+    segment = None
+    segment_advances = []
+    missing_since = None
+    last_fresh = time.monotonic()
+    last_motion = time.monotonic()
+    last_coords = None
+
+    def finish_segment():
+        if segment is not None:
+            segment_advances.append(
+                (segment["best_me"] - segment["start_me"])
+                - (segment["start_them"] - segment["worst_them"])
+            )
+
+    def reset_after_recovery():
+        nonlocal prev, segment, missing_since, last_motion, last_coords, last_fresh
+        finish_segment()
+        prev = None
+        segment = None
+        missing_since = None
+        last_motion = time.monotonic()
+        last_coords = None
+        last_fresh = time.monotonic()
+
+    while time.monotonic() < deadline:
+        now = time.monotonic()
+        if not mgr.alive():
+            recovery_started = time.monotonic()
+            if not mgr.restart("process died during individual"):
+                break
+            deadline += time.monotonic() - recovery_started
+            reset_after_recovery()
+            continue
+
+        st, stale = mgr.read_state()
+        if stale:
+            if now - last_fresh > STATE_STALE:
+                recovery_started = time.monotonic()
+                if not mgr.restart("state file stale during individual"):
+                    break
+                deadline += time.monotonic() - recovery_started
+                reset_after_recovery()
+            else:
+                time.sleep(0.1)
+            continue
+        last_fresh = now
+
+        if not mgr.has_players(st):
+            if missing_since is None:
+                missing_since = now
+            elif now - missing_since >= MISSING_MATCH_OVER:
+                recovery_started = time.monotonic()
+                if not mgr.recover_match():
+                    break
+                deadline += time.monotonic() - recovery_started
+                reset_after_recovery()
+            else:
+                time.sleep(0.1)
+            continue
+
+        missing_since = None
+        mgr.ever_have_players = True
+        if segment is None:
+            segment = {
+                "start_me": st["me_x"], "best_me": st["me_x"],
+                "start_them": st["them_x"], "worst_them": st["them_x"],
+            }
+
+        coords = (st["me_x"], st["me_y"], st["them_x"], st["them_y"])
+        if last_coords is not None and any(
+                abs(a - b) > 1.0 for a, b in zip(coords, last_coords)):
+            last_motion = now
+        elif now - last_motion > FROZEN_MATCH_OVER:
+            # Some stats screens leave sticky fighter state. No coordinates
+            # changing for six seconds despite actions is the fallback signal.
+            recovery_started = time.monotonic()
+            if not mgr.recover_match():
+                break
+            deadline += time.monotonic() - recovery_started
+            reset_after_recovery()
+            continue
+        last_coords = coords
+
+        if prev is not None:
+            if abs(st["me_x"] - prev["me_x"]) > SPAWN_JUMP:
+                mine += 1
+            if abs(st["them_x"] - prev["them_x"]) > SPAWN_JUMP:
+                theirs += 1
+        prev = dict(st)
+        segment["best_me"] = max(segment["best_me"], st["me_x"])
+        segment["worst_them"] = min(segment["worst_them"], st["them_x"])
+        trace.append([
+            round(seconds - max(0.0, deadline - now), 2),
+            round(st["me_x"]), round(st["them_x"]),
+        ])
+        mgr.press(act(params, st, rng))
+        time.sleep(0.05)
+
+    finish_segment()
+    advance = sum(segment_advances)
+    fitness = 3.0 * theirs - 2.0 * mine + advance / 100.0
+    return {
+        "fitness": round(fitness, 3),
+        "my_deaths": mine,
+        "their_deaths": theirs,
+        "advance": round(advance, 1),
+        "params": params,
+        "trace": trace,
+        "tag": tag,
+    }
+
+
+def failed_record(params, tag):
+    return {
+        "fitness": -100.0, "my_deaths": 0, "their_deaths": 0,
+        "advance": 0.0, "params": params, "trace": [], "tag": tag,
+    }
+
+
+def append_record(rec):
+    with open(LOG_PATH, "a") as f:
+        f.write(json.dumps(rec) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--gens", type=int, default=6)
+    parser.add_argument("--pop", type=int, default=8)
+    parser.add_argument("--window", type=float, default=25.0)
+    parser.add_argument("--seed", type=int, default=23)
+    args = parser.parse_args()
+
+    if os.path.exists(LOG_PATH):
+        backup = f"{LOG_PATH}.bak.{int(time.time())}"
+        os.replace(LOG_PATH, backup)
+        log(f"previous log backed up to {backup}")
+
+    # Mute only the game. The finally block always restores the user's prefs.
+    shutil.copyfile(MUTED_PREFS, PREFS)
+    mgr = InstanceManager(0)
+    rng = random.Random(args.seed)
+    population = [A.rand_params(rng) for _ in range(args.pop)]
+    best = None
+    generations = []
+    run_started = time.monotonic()
+    stopped_for_budget = False
+
+    try:
+        mgr.launch()
+        for gen in range(args.gens):
+            results = []
+            for ind, params in enumerate(population):
+                if time.monotonic() - run_started > RUN_BUDGET:
+                    stopped_for_budget = True
+                    log("40-minute safety budget reached; stopping cleanly")
+                    break
+                tag = f"g{gen}i{ind}"
+                mgr.current_tag = tag
+                if mgr.ensure_match():
+                    rec = run_individual(
+                        mgr, params, args.window,
+                        args.seed + gen * 97 + ind, tag,
+                    )
+                else:
+                    rec = failed_record(params, tag)
+                append_record(rec)
+                results.append(rec)
+                log(f"{tag}: fit={rec['fitness']:.3f} their={rec['their_deaths']} "
+                    f"mine={rec['my_deaths']} advance={rec['advance']:.1f} "
+                    f"samples={len(rec['trace'])}")
+            if stopped_for_budget:
+                break
+
+            results.sort(key=lambda rec: -rec["fitness"])
+            generation_best = results[0]
+            mean = statistics.fmean(rec["fitness"] for rec in results)
+            generations.append({
+                "generation": gen, "best": generation_best["fitness"],
+                "mean": round(mean, 3), "best_tag": generation_best["tag"],
+            })
+            print(f"== gen {gen} best {generation_best['fitness']:.1f} "
+                  f"mean {mean:.1f}", flush=True)
+            if best is None or generation_best["fitness"] > best["fitness"]:
+                best = generation_best
+
+            elite = [rec["params"] for rec in results[:max(2, args.pop // 3)]]
+            next_population = list(elite)
+            while len(next_population) < args.pop:
+                a, b = rng.sample(elite, 2)
+                next_population.append(A.mutate(A.crossover(a, b, rng), rng))
+            population = next_population
+
+        if best is not None:
+            print("best params:", json.dumps(best["params"]), flush=True)
+            print(f"best tag {best['tag']} fitness {best['fitness']}", flush=True)
+    finally:
+        if best is not None:
+            atomic_json(BEST_PATH, {
+                "tag": best["tag"], "fitness": best["fitness"],
+                "params": best["params"],
+            })
+        episodes = sorted(mgr.recovery_episodes | mgr.restart_episodes)
+        atomic_json(SUMMARY_PATH, {
+            "complete": len(generations) == args.gens and not stopped_for_budget,
+            "requested": {"generations": args.gens, "population": args.pop,
+                          "seconds_per_individual": args.window, "seed": args.seed},
+            "generations": generations,
+            "best": best,
+            "episodes_needing_restart_or_recovery": len(episodes),
+            "episode_tags_needing_restart_or_recovery": episodes,
+            "episodes_needing_hard_restart": len(mgr.restart_episodes),
+            "episode_tags_needing_hard_restart": sorted(mgr.restart_episodes),
+            "match_recoveries": mgr.match_recoveries,
+            "hard_instance_restarts": mgr.hard_restarts,
+            "log": LOG_PATH,
+        })
+        mgr.current_tag = None
+        mgr.close()
+        shutil.copyfile(PRISTINE_PREFS, PREFS)
+        log("owned game stopped; pristine prefs restored")
+
+
+if __name__ == "__main__":
+    main()

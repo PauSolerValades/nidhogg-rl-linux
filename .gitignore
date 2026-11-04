@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+out/*.mp4
+logs/
+utmt/
+game/
+.DS_Store
+
+# game binaries and build artefacts must never be published
+legacy/work_small/*.app
+*.app/
+*.ios
