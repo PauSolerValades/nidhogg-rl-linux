@@ -111,3 +111,22 @@ should latch onto.
 Next: a `goto_row(i, k)` built on the bar detector (press `Down`, verify the bar moved,
 retry when dropped) — that turns menu entry into a retried state machine instead of a
 timed key dump, and unblocks the scan.
+
+## 2026-11: `in_menu()` is not trustworthy yet
+
+`darkfrac > 0.35` in the box region separates menus (0.39–0.47) from the title (0.00) and
+the bright attract levels (0.22–0.25) — but the **castle attract level is dark enough to
+false-positive**. A live run returned "menu: True" on the attract screen, so `ensure_menu`
+stopped pressing too early and the following Up/Return were spent on the title fade.
+
+Fix candidates, cheapest first:
+
+1. Use the **scan itself as the entry verifier**: a match exists iff holding `d` makes a
+   float32 slot move right at fighter speed. Then entry does not need to know which screen
+   it is on — it tries an entry variant and asks the *game state* whether it worked. This
+   is the macOS harness's "verify by CPU motion" idea, but with a signal that cannot be
+   faked by an animation.
+2. Require the menu box to have bright text pixels inside the dark block
+   (`brightfrac` small but nonzero) and a straight border, which the castle level lacks.
+3. Detect the selection bar (works on the pause menu) and use "the bar moved by exactly
+   one row" as the acknowledgement that a Down landed.

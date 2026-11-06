@@ -27,24 +27,13 @@ GAP = 0.25
 WARMUP = 15.0                      # the runner eats keys before ~frame 690
 
 
-def cmd_path(pid):
-    return Path(f"/tmp/nid_cmd_{pid}")
-
-
 def dump(pid, addr, size, path="/tmp/nid_scan.bin"):
-    out = Path(path)
-    out.unlink(missing_ok=True)
-    cmd = cmd_path(pid)
-    cmd.write_text(f"dump {addr:x} {size:x} {path}\n")
-    t0 = time.time()
-    while cmd.exists() and time.time() - t0 < 20:
-        time.sleep(0.02)
-    return np.fromfile(path, dtype="<f4") if out.exists() else None
+    raw = n.memory(pid, addr, size, path)
+    return np.frombuffer(raw, "<f4") if raw else None
 
 
 def poke_f32(pid, addr, value):
-    cmd_path(pid).write_text(f"poke {addr:x} {struct.pack('<f', value).hex()}\n")
-    time.sleep(0.2)
+    n.poke(pid, addr, struct.pack("<f", value))
 
 
 def sample(pid):
@@ -98,9 +87,9 @@ def main():
         enter_local_match(i)
 
     print(f"holding 'd' and sampling {SAMPLES}×{GAP}s…")
-    key(i, "d", hold=True)
+    n.keydown(i, "d")
     A = sample(pid)
-    n.key(i, "d")          # release via keyup
+    n.keyup(i, "d")
     time.sleep(0.5)
     right = moving_slots(A, 20, 80, 3, 8)
     print(f"{len(right)} slots moved right at fighter speed")
@@ -108,9 +97,9 @@ def main():
         print(f"  {HEAP[0] + k*4:#x}  {[round(float(v),1) for v in A[::3, k]]}")
 
     print("holding 'a' — the same slots must move left…")
-    n.key(i, "a", hold=True)
+    n.keydown(i, "a")
     B = sample(pid)
-    n.key(i, "a")
+    n.keyup(i, "a")
     left = set(moving_slots(B, -80, -20, 3, 8).tolist())
     confirmed = [k for k in right if k in left]
     print(f"{len(confirmed)} confirmed (right while 'd', left while 'a'):")
@@ -118,18 +107,6 @@ def main():
         print(f"  {HEAP[0] + k*4:#x}  now {float(B[-1, k]):8.2f}")
     Path("/tmp/nid_x_candidates.txt").write_text(
         "\n".join(f"{HEAP[0] + k*4:#x}" for k in confirmed))
-
-
-def key(i, keysym, hold=False):
-    """keydown/keyup without release, for 'hold this direction' sampling."""
-    import os
-    import subprocess
-    env = dict(os.environ, DISPLAY=n._pids()[str(i)]["display"])
-    w = n.window(i)
-    if w:
-        subprocess.run(["xdotool", "windowfocus", w], env=env, capture_output=True)
-    subprocess.run(["xdotool", "keydown" if hold else "keyup", keysym], env=env,
-                   capture_output=True)
 
 
 if __name__ == "__main__":

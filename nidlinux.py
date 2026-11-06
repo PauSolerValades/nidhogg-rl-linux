@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""Headless Nidhogg on Linux: owns the process tree, reads state from /proc/<pid>/mem.
+"""Headless Nidhogg on Linux: the hands and eyes.
 
-Why python owns the launch: /proc/kernel/yama/ptrace_scope is 1 here, so only an
-ANCESTOR may attach. If we spawn proton, we are the game's ancestor and memory reads
-need no root and no injection.
+This file never touches game memory. It owns the processes (so each instance is
+isolated), sends keys, takes screenshots, and talks to `spy/nidspy.so` — which is
+preloaded INTO the game and reads/writes its own address space, because
+/proc/<pid>/mem is refused here (ptrace_scope=1 + Proton's container + the process
+reparenting to systemd).
 
-  ./farm.sh init            # once: reflinked game copy + wine prefix template
+  ./farm.sh init                 # once: reflinked game copy + wine prefix template
   python3 nidlinux.py start 4
   python3 nidlinux.py status
-  python3 nidlinux.py shot 0 out.png
-  python3 nidlinux.py key 0 Return
-  python3 nidlinux.py scan 0
+  python3 nidlinux.py menu 0     # press Return until a menu is on screen
+  python3 nidlinux.py key 0 Down
+  python3 nidlinux.py peek 0     # one window screenshot
   python3 nidlinux.py stop
 """
 import json
@@ -28,10 +30,10 @@ STEAM = HOME / ".local/share/Steam"
 PROTON = STEAM / "steamapps/common/Proton - Experimental/proton"
 GAME = FARM / "game/Nidhogg.exe"
 PROCS = FARM / "procs.json"
+SPY = Path(__file__).parent / "spy/nidspy.so"
 DISPLAY_BASE = 10
-Xvfb = "Xvfb"
 
-# ---------------------------------------------------------------- launch / keys
+# ---------------------------------------------------------------- launch
 
 
 def _pids():
@@ -39,7 +41,7 @@ def _pids():
 
 
 def _ensure_display(disp, size="640x480x24"):
-    """Every instance needs its own Xvfb: no window is ever visible."""
+    """Every instance gets its own Xvfb: no window is ever visible."""
     if subprocess.run(["pgrep", "-f", f"Xvfb {disp} "], capture_output=True).returncode == 0:
         return
     subprocess.Popen(["Xvfb", disp, "-screen", "0", size, "-nolisten", "tcp"],
@@ -54,16 +56,6 @@ def start(n):
         disp = f":{DISPLAY_BASE + i}"
         _ensure_display(disp)
         prefix = FARM / f"inst/{i}"
-        env = dict(os.environ)
-        env.pop("WAYLAND_DISPLAY", None)
-        env.update(
-            DISPLAY=disp,
-            STEAM_COMPAT_CLIENT_INSTALL_PATH=str(STEAM),
-            STEAM_COMPAT_DATA_PATH=str(prefix),
-            SteamAppId="94400",
-            SteamGameId="94400",
-            LD_PRELOAD=str(Path(__file__).parent / "spy/nidspy.so"),
-        )
         if prefix.exists():
             for lock in ("pfx.lock", "pfx/dosdevices/z:"):
                 (prefix / lock).unlink(missing_ok=True)
@@ -71,11 +63,14 @@ def start(n):
             # reflink copy of the initialised template: instant, ~0 bytes on btrfs
             subprocess.run(["cp", "-a", "--reflink=always", str(FARM / "template"), str(prefix)],
                            check=True)
+        env = dict(os.environ)
+        env.pop("WAYLAND_DISPLAY", None)
+        env.update(DISPLAY=disp, STEAM_COMPAT_CLIENT_INSTALL_PATH=str(STEAM),
+                   STEAM_COMPAT_DATA_PATH=str(prefix), SteamAppId="94400",
+                   SteamGameId="94400", LD_PRELOAD=str(SPY))
         log = open(FARM / f"logs/py_{i}.log", "ab")
-        p = subprocess.Popen(
-            [str(PROTON), "waitforexitandrun", str(GAME)],
-            env=env, stdout=log, stderr=log, start_new_session=True,
-        )
+        p = subprocess.Popen([str(PROTON), "waitforexitandrun", str(GAME)],
+                             env=env, stdout=log, stderr=log, start_new_session=True)
         procs[str(i)] = {"wrapper": p.pid, "display": disp}
         print(f"instance {i}: display {disp}, wrapper {p.pid}")
     PROCS.write_text(json.dumps(procs, indent=1))
@@ -108,31 +103,53 @@ def _game_pid(i):
     return None
 
 
+# ---------------------------------------------------------------- input
+
+
+def _env(i):
+    return dict(os.environ, DISPLAY=_pids()[str(i)]["display"])
+
+
 def window(i):
-    env = dict(os.environ, DISPLAY=_pids()[str(i)]["display"])
-    w = subprocess.run(
-        ["xdotool", "search", "--onlyvisible", "--name", "[Nn]idhogg"],
-        env=env, capture_output=True, text=True,
-    ).stdout.split()
+    w = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "[Nn]idhogg"],
+                       env=_env(i), capture_output=True, text=True).stdout.split()
     return w[0] if w else None
 
 
-def key(i, keysym, hold=0.0):
-    env = dict(os.environ, DISPLAY=_pids()[str(i)]["display"])
+def _focus(i):
     w = window(i)
     if w:
-        subprocess.run(["xdotool", "windowfocus", w], env=env, capture_output=True)
+        subprocess.run(["xdotool", "windowfocus", w], env=_env(i), capture_output=True)
+    return w
+
+
+def key(i, keysym, hold=0.0):
+    """One key press, or keydown+keyup held for `hold` seconds."""
+    _focus(i)
     if hold:
-        subprocess.run(["xdotool", "keydown", keysym], env=env)
+        subprocess.run(["xdotool", "keydown", keysym], env=_env(i), capture_output=True)
         time.sleep(hold)
-        subprocess.run(["xdotool", "keyup", keysym], env=env)
+        subprocess.run(["xdotool", "keyup", keysym], env=_env(i), capture_output=True)
     else:
-        subprocess.run(["xdotool", "key", "--clearmodifiers", keysym], env=env, capture_output=True)
+        subprocess.run(["xdotool", "key", "--clearmodifiers", keysym],
+                       env=_env(i), capture_output=True)
+
+
+def keydown(i, keysym):
+    _focus(i)
+    subprocess.run(["xdotool", "keydown", keysym], env=_env(i), capture_output=True)
+
+
+def keyup(i, keysym):
+    subprocess.run(["xdotool", "keyup", keysym], env=_env(i), capture_output=True)
+
+
+# ---------------------------------------------------------------- eyes
 
 
 def grab(i, path="/tmp/nid_grab.png"):
     """Instant window-only screenshot (ImageMagick import; ffmpeg x11grab lags)."""
-    w = window(i)
+    w = _focus(i)
     if not w:
         return None
     subprocess.run(["import", "-display", _pids()[str(i)]["display"], "-window", w, path],
@@ -152,11 +169,11 @@ def frame(i, path="/tmp/nid_f.png"):
 
 
 def stable_change(base, after):
-    """Pixels that changed AND were static in the baseline (immune to animated backgrounds).
+    """Pixels that changed AND were static in the baseline (immune to animated art).
 
-    The title/menus have animated birds/grass: a plain frame diff reports ~10k changed
-    pixels every second with no input at all. Passing two consecutive baseline frames
-    excludes exactly those noisy pixels.
+    The title and menus have animated birds and grass: a plain frame diff reports ~10k
+    changed pixels every second with no input at all. Two consecutive baseline frames
+    mark exactly those noisy pixels, so they can be excluded.
     """
     if base is None or after is None:
         return 0
@@ -167,145 +184,84 @@ def stable_change(base, after):
 
 
 def press(i, keysym, tries=6, wait=0.9, thresh=60):
-    """Press until the screen really changes, not until an animation happens."""
+    """Press until the screen really changes — keys are dropped mid-transition."""
     b1 = frame(i, "/tmp/nid_b1.png")
     time.sleep(0.35)
     b2 = frame(i, "/tmp/nid_b2.png")
     for _ in range(tries):
         key(i, keysym)
         time.sleep(wait)
-        cur = frame(i, "/tmp/nid_b3.png")
-        n = stable_change((b1, b2), cur)
-        if n > thresh:
-            return n
-    return 0
+        if stable_change((b1, b2), frame(i, "/tmp/nid_b3.png")) > thresh:
+            return True
+    return False
 
 
-# ---------------------------------------------------------------- memory
+def in_menu(i):
+    """A menu is on screen: the dialogue box is a big block of near-black pixels."""
+    a = frame(i, "/tmp/nid_menu.png")
+    if a is None:
+        return False
+    lum = a.mean(2)[100:175, 100:295]
+    return (lum < 25).mean() > 0.35
 
 
-def regions(pid):
-    out = []
-    with open(f"/proc/{pid}/maps") as f:
-        for line in f:
-            parts = line.split()
-            if parts[1][0] != "r" or parts[1][1] != "w":
-                continue
-            a, b = (int(x, 16) for x in parts[0].split("-"))
-            if 4096 <= b - a <= 512 << 20:
-                out.append((a, b))
-    return out
+def ensure_menu(i, tries=8):
+    """Get a menu on screen (from attract: Return -> title -> Return -> main menu)."""
+    for _ in range(tries):
+        if in_menu(i):
+            return True
+        key(i, "Return")
+        time.sleep(1.6)
+    return in_menu(i)
 
 
-def snap(pid, regs):
-    """{region: np.float64 array of every 8-byte slot}"""
-    fd = os.open(f"/proc/{pid}/mem", os.O_RDONLY)
-    out = {}
-    try:
-        for a, b in regs:
-            try:
-                buf = os.pread(fd, b - a, a)
-            except OSError:
-                continue
-            n = len(buf) // 8
-            if n:
-                out[(a, b)] = np.frombuffer(buf[: n * 8], "<f8").copy()
-    finally:
-        os.close(fd)
-    return out
+# ---------------------------------------------------------------- spy protocol
 
 
-def moving(s0, s1, lo, hi):
-    """addresses whose double moved into (lo, hi) between snapshots"""
-    hits = []
-    for k in s0.keys() & s1.keys():
-        x, y = s0[k], s1[k]
-        # plausible game values only: finite, small magnitude, both sides
-        ok = (np.abs(x) < 1e5) & (np.abs(y) < 1e5) & np.isfinite(x) & np.isfinite(y)
-        d = np.where(ok, y - x, 0.0)
-        for i in np.nonzero((d > lo) & (d < hi))[0]:
-            hits.append((k[0] + i * 8, float(x[i]), float(y[i])))
-    return hits
+def memory(pid, addr, size, path="/tmp/nid_dump.bin"):
+    """Ask the in-process spy for a byte range (it reads its own memory)."""
+    out = Path(path)
+    out.unlink(missing_ok=True)
+    cmd = Path(f"/tmp/nid_cmd_{pid}")
+    cmd.write_text(f"dump {addr:x} {size:x} {path}\n")
+    t0 = time.time()
+    while cmd.exists() and time.time() - t0 < 20:
+        time.sleep(0.02)
+    return out.read_bytes() if out.exists() else None
 
 
-def scan(i):
-    pid = _game_pid(i)
-    if not pid:
-        sys.exit("no game process for instance (is it running?)")
-    regs = regions(pid)
-    print(f"pid {pid}: {len(regs)} rw regions, {sum(b - a for a, b in regs)/1e6:.0f} MB")
-    t = time.time()
-    s0 = snap(pid, regs)
-    print(f"snapshot 0 in {time.time() - t:.1f}s")
-    key(i, "d", hold=2.0)
-    s1 = snap(pid, regs)
-    key(i, "a", hold=2.0)
-    s2 = snap(pid, regs)
-    right = moving(s0, s1, 5, 60)
-    left = {a for a, _, _ in moving(s1, s2, -60, -5)}
-    cand = [(a, v0, v1) for a, v0, v1 in right if a in left]
-    print(f"moved right then left by fighter-speed: {len(cand)} candidates")
-    for a, v0, v1 in cand[:40]:
-        print(f"  0x{a:x}  {v0:9.2f} -> {v1:9.2f}")
-    return cand
+def poke(pid, addr, raw):
+    Path(f"/tmp/nid_cmd_{pid}").write_text(f"poke {addr:x} {raw.hex()}\n")
+    time.sleep(0.2)
 
 
-# ---------------------------------------------------------------- entry
-
-
-def enter(i):
-    """title -> main menu -> SINGLE PLAYER, one verified press at a time."""
-    steps = [("Return", "main menu"), ("Up", "up to SINGLE PLAYER"), ("Return", "single player")]
-    for k, label in steps:
-        n = press(i, k)
-        print(f"  {label}: {n} px changed{'  <-- NO CHANGE' if not n else ''}")
-        grab(i, f"/tmp/nid_step_{label.replace(' ', '_')}.png")
-    return grab(i, f"/tmp/nid_entry_{i}.png")
-
-
-def probe():
-    """Launch one instance and everything below must run in THIS process (ancestor rule)."""
-    stop()
-    time.sleep(2)
-    start(1)
+def ping(pid):
+    res = Path(f"/tmp/nid_res_{pid}")
+    res.unlink(missing_ok=True)
+    Path(f"/tmp/nid_cmd_{pid}").write_text("ping\n")
     for _ in range(40):
-        if window(0):
-            break
-        time.sleep(2)
-    entry(0)
-    scan(0)
-
-
-def shot(i, path):
-    env = dict(os.environ, DISPLAY=_pids()[str(i)]["display"])
-    subprocess.run(
-        ["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "x11grab",
-         "-video_size", "640x480", "-i", _pids()[str(i)]["display"],
-         "-frames:v", "1", "-y", path],
-        env=env, check=True,
-    )
-    return path
+        time.sleep(0.05)
+        if res.exists():
+            return res.read_text().strip()
+    return None
 
 
 if __name__ == "__main__":
-    cmd = sys.argv[1]
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "start":
         start(int(sys.argv[2]))
     elif cmd == "stop":
         stop()
     elif cmd == "status":
         for i in _pids():
-            pid = _game_pid(i)
-            print(f"{i}: display {_pids()[i]['display']} pid {pid}")
-    elif cmd == "shot":
-        print(grab(int(sys.argv[2]), sys.argv[3]))
+            print(f"{i}: display {_pids()[i]['display']} pid {_game_pid(i)}")
     elif cmd == "key":
         key(int(sys.argv[2]), sys.argv[3])
-    elif cmd == "entry":
-        enter(int(sys.argv[2]))
-    elif cmd == "probe":
-        probe()
-    elif cmd == "scan":
-        scan(int(sys.argv[2]))
+    elif cmd == "peek":
+        print(grab(int(sys.argv[2]), sys.argv[3] if len(sys.argv) > 3 else "/tmp/nid_grab.png"))
+    elif cmd == "menu":
+        print("menu reached" if ensure_menu(int(sys.argv[2])) else "no menu")
+    elif cmd == "ping":
+        print(ping(_game_pid(int(sys.argv[2]))))
     else:
         print(__doc__)
