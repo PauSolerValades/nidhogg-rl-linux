@@ -35,6 +35,7 @@ spawn() {  # $1=tag $2=display_base $3=farm
 pkill -x 'Nidhogg.exe' 2>/dev/null; sleep 2
 spawn a 10 "$HOME/.nidfarm"
 spawn b 20 "$HOME/.nidfarm-b"
+spawn c 30 "$HOME/.nidfarm-c"
 echo "[spawn] both launched; logs in $REPO/logs/worker_{a,b}.log"
 wait
 echo "[spawn] both finished"
