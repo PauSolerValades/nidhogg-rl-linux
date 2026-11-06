@@ -32,10 +32,16 @@ spawn() {  # $1=tag $2=display_base $3=farm
     echo "[worker $tag] exit $?" >> "$REPO/logs/worker_$tag.log" ) &
 }
 
+TAGS="${*:-a b c}"
 pkill -x 'Nidhogg.exe' 2>/dev/null; sleep 2
-spawn a 10 "$HOME/.nidfarm"
-spawn b 20 "$HOME/.nidfarm-b"
-spawn c 30 "$HOME/.nidfarm-c"
+for t in $TAGS; do
+  case "$t" in
+    a) spawn a 10 "$HOME/.nidfarm" ;;
+    b) spawn b 20 "$HOME/.nidfarm-b" ;;
+    c) spawn c 30 "$HOME/.nidfarm-c" ;;
+    *) echo "[spawn] unknown tag $t" ;;
+  esac
+done
 echo "[spawn] both launched; logs in $REPO/logs/worker_{a,b}.log"
 wait
 echo "[spawn] both finished"
