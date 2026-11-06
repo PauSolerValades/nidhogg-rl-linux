@@ -64,3 +64,50 @@ or a draw record), and where `y` and the round/health state live.
 
 ~40–56% of one core, ~455 MB RSS, 60 steps/s, silent, no window.
 8 cores ≈ 14 instances ≈ 840 steps/s.
+
+## Menu entry — measured map (2026-11)
+
+Screens, in the order the Enter-only path visits them:
+
+```
+attract demo (fighters play themselves)
+  -> title "PRESS ____"
+  -> MENU:  ARCADE / SINGLE PLAYER / MULTIPLAYER(selected) / OPTIONS / EXIT TO DESKTOP
+       MULTIPLAYER -> LOCAL(selected) / ONLINE
+       LOCAL -> READY screen (YELLOW vs ORANGE)      <-- traps: round never starts
+  in a match: ESC -> PAUSE: CHANGE COLOR / JEN TOLERANT / OPTIONS / EXIT
+       EXIT -> "QUIT TO DESKTOP? NO / YES"           <-- hazard: Escape spam can land here
+```
+
+What is reliable:
+
+* `Down` / `Up` move the selection one item per press (verified in the pause menu and,
+  with screenshots, in the main menu). No wrap surprises other than the list wrapping.
+* `Return` confirms — **but it is silently dropped** when it arrives during a transition
+  or during the title fade. This is the whole reason fixed key sequences are flaky.
+* Both input paths work: XTEST (`xdotool key`) and XSendEvent (`xdotool key --window`);
+  neither is immune to the dropped-key problem.
+* Keys sent in the first ~15 s after launch go nowhere (`WARMUP`).
+
+Consequences baked into the tooling:
+
+* Never send a bare key sequence: every step must be **verified against the screen**, and
+  retried when nothing changed. `nidlinux.py press()` does this (stable-pixel diff, immune
+  to the animated backgrounds).
+* Prefer the LOCAL 2-player match for state discovery: both fighters are ours, and the
+  round not starting does not matter for finding `x`.
+* The selection is readable without OCR: the selected row is drawn on a lighter bar
+  (detector works on the pause menu; the main menu box sits lower and needs its own
+  thresholds).
+
+## Where the state hunt stands
+
+`findstate.py` (hold `d`, keep float32 slots moving right at 12 px/s, confirm with `a`)
+returns 0 candidates while entry is unconfirmed — the scan needs a real match, so entry
+determinism is now the blocking item. The physics has been observed directly: `d`/`a`
+move YELLOW at fighter speed on the READY screen, which is the ground truth the scan
+should latch onto.
+
+Next: a `goto_row(i, k)` built on the bar detector (press `Down`, verify the bar moved,
+retry when dropped) — that turns menu entry into a retried state machine instead of a
+timed key dump, and unblocks the scan.

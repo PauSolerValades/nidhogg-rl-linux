@@ -38,10 +38,21 @@ def _pids():
     return json.loads(PROCS.read_text()) if PROCS.exists() else {}
 
 
+def _ensure_display(disp, size="640x480x24"):
+    """Every instance needs its own Xvfb: no window is ever visible."""
+    if subprocess.run(["pgrep", "-f", f"Xvfb {disp} "], capture_output=True).returncode == 0:
+        return
+    subprocess.Popen(["Xvfb", disp, "-screen", "0", size, "-nolisten", "tcp"],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+    time.sleep(1.5)
+
+
 def start(n):
     procs = {}
     for i in range(n):
         disp = f":{DISPLAY_BASE + i}"
+        _ensure_display(disp)
         prefix = FARM / f"inst/{i}"
         env = dict(os.environ)
         env.pop("WAYLAND_DISPLAY", None)
@@ -56,6 +67,10 @@ def start(n):
         if prefix.exists():
             for lock in ("pfx.lock", "pfx/dosdevices/z:"):
                 (prefix / lock).unlink(missing_ok=True)
+        else:
+            # reflink copy of the initialised template: instant, ~0 bytes on btrfs
+            subprocess.run(["cp", "-a", "--reflink=always", str(FARM / "template"), str(prefix)],
+                           check=True)
         log = open(FARM / f"logs/py_{i}.log", "ab")
         p = subprocess.Popen(
             [str(PROTON), "waitforexitandrun", str(GAME)],
