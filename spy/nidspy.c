@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <time.h>
 #include <unistd.h>
 
 static int g_pid;
@@ -25,6 +26,28 @@ static void *loop(void *arg) {
                 FILE *o = fopen(out, "wb");
                 if (o && fwrite((void *)a, 1, l, o) == l) { fclose(o); }
                 else if (o) { fclose(o); unlink(out); }
+            } else if (!strncmp(line, "hold ", 5)) {
+                // hold <addr> <bytes-hex> <ms>: pin a value across frames so the
+                // game cannot overwrite it before we observe the effect.
+                unsigned long a, ms; char hex[64];
+                if (sscanf(line + 5, "%lx %lu %63s", &a, &ms, hex) == 3) {
+                    unsigned char buf[32];
+                    unsigned long nb = strlen(hex) / 2;
+                    if (nb > sizeof buf) nb = sizeof buf;
+                    for (unsigned long k = 0; k < nb; k++) {
+                        unsigned int b;
+                        sscanf(hex + k * 2, "%2x", &b);
+                        buf[k] = (unsigned char)b;
+                    }
+                    struct timespec t0, t1;
+                    clock_gettime(CLOCK_MONOTONIC, &t0);
+                    do {
+                        memcpy((void *)a, buf, nb);
+                        usleep(500);
+                        clock_gettime(CLOCK_MONOTONIC, &t1);
+                    } while ((unsigned long)((t1.tv_sec - t0.tv_sec) * 1000 +
+                                             (t1.tv_nsec - t0.tv_nsec) / 1000000) < ms);
+                }
             } else if (!strncmp(line, "poke ", 5)) {
                 unsigned long a, i = 0; char hex[512];
                 char *p = line + 5;

@@ -163,3 +163,35 @@ Lessons:
    ~50 candidates × 1.5 s ≈ 1–2 min per pass, fully automatic.
 4. The confirmed slot also gives the struct layout: `y` and neighbours are then found by
    reading around it, and the second fighter by scanning for the same offsets elsewhere.
+
+## 2026-11: poke-and-watch works mechanically, but the oracle is confounded
+
+The loop runs end to end: 39 candidates from the drift stimulus, pinned with the spy's new
+`hold <addr> <bytes> <ms>` (pins a value across frames at 2 kHz so the game cannot
+overwrite it), sprite position read from the pure-yellow mask. It "confirmed"
+`0x1920ccc` twice, on two fresh instances.
+
+It is wrong. Controls:
+
+```
+slot value 0.0 while the sprite sat at screen x=85   -> not a position
+held -60 -> sprite 89 | held 0 -> 95 | held +60 -> 136
+```
+
+The sprite **drifts on its own** between probes (89 -> 95 untouched), so "moved 39 px"
+cannot be attributed to the write. The slot behaves like a velocity/offset input.
+
+Two things to fix before the hunt is worth re-running:
+
+1. **Kill autonomous motion.** The READY screen looks static but is not. Cleanest fix
+   available: `Escape` opens the PAUSE menu, which freezes the simulation while the
+   renderer keeps drawing. Poke while paused and the sprite can only move because of our
+   write — zero drift, zero noise (baseline noise already measured as 0 px there).
+2. **Use a monotone, multi-point criterion, not one jump.** Pin the candidate to
+   v-120 / v / v+120 in alternating order twice, and require the sprite position to be an
+   injective function of the pinned value (A B A B on two levels). A drifting value fails
+   this; a real position passes.
+
+Also worth noting: with the game paused, the same harness can find `y` (poke to 40 and
+the sprite should rise), and the P2 instance by repeating the protocol for the orange
+player.
