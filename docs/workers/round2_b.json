@@ -1,0 +1,17 @@
+{
+  "tag": "b",
+  "goal": "P1.y",
+  "found": false,
+  "addr": null,
+  "width": 4,
+  "jump_key": null,
+  "sprite_y": {"before": 153.0, "after": 143.6},
+  "x_offset_from_y": -4,
+  "refind": "In attract mode (fresh instance, no input) the yellow fighter jumps on its own every ~3 s. Watch its screen y (pure-yellow mask centroid rows); when it drops >=6 px below baseline, dump the rw heap 0x16a0000-0x8200000 seven times ~0.12 s apart. Keep f32 slots whose 7-sample series is a V (both ends high, middle low, depth >20, return within 40, values 0..600) AND fractional (not round ints). This yields room-space (x,y) pairs around 0x1900000-0x1903000, e.g. y at 0x19004f0 = 191.8 -> 52.4 -> 172.5 with x at 0x19004f0-4 = 939.3..936.6, and y at 0x19018f0 = 170.0 -> 63.6 -> 207.9 with x at 0x19018f0-4 = 924.3 -> 881.9. x sits 4 bytes before y in the same struct. UNPROVEN: accumulate on these could not be attributed to sprite motion because the attract-mode AI moves both fighters and the demo changes rooms.",
+  "dead_ends": [
+    "menu: nidstate.enter_live_match(0) never reaches a live match on this Linux build - main-menu Up/Down are INVERTED (Up moves selection DOWN, Down moves UP), so its leading Up lands in MULTIPLAYER->LOCAL->READY (cpu_motion=0). Default main-menu row is SINGLE PLAYER (sel y=124); its submenu defaults to TRAINING (sel y=139). Corrected path (Return->Return->ladder) reached a dark personality/card screen (darkfrac 0.97, no cpu motion) but not a fight before time ran out.",
+    "0x818xxxx region: integer V-shaped slots during a jump (0x8189d64: 188/191/179/108/73/139/191) are screen-space draw/rect bookkeeping, not instance y - values are round ints, stay in 0..200, and change with the room (same address read 153.0, 111.0, 271.0 at different times).",
+    "attract-mode verify is confounded: accumulate(-150/+300) on candidate y gave sprite-y traces within the AI's own jump range and the demo transitions rooms mid-trial, so no write effect could be isolated.",
+    "0x19004f0 itself is not stable across rooms (read 127.0 then 302.0 after a room change), so the fractional jump arc is room-space state but whether it is the physics instance or a derived room-space draw/view copy is still open."
+  ]
+}

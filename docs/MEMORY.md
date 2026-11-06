@@ -44,3 +44,47 @@ live fight.**
    `DrawIndexed` / `Present` yields exact drawn positions *and* the instance pointer held by
    the draw record — turning "find x by poking" into "read the pointer, then scan the
    struct".
+
+## Round 2 workers (live matches) — still no proven offset, but the noise is mapped
+
+Both ran 25 min against a *live* match and returned `found: false`. What they eliminated
+is now specific:
+
+* **The `+130 rising` pair from the previous run is a timer**, not camera or position: it
+  rises monotonically under `a` as well as `d` (worker A).
+* **Every motion candidate repaints a wide or full frame** under `accumulate +300`
+  (bbox 8..319 × 4..177): they are view/surface/draw state, and none isolates the sprite.
+* **World shift is tiny**: holding `d` for 1.25 s shifts the background strip by only
+  −4 px (`a`: +4 px). The camera absorbs nearly all of the fighter's motion, so
+  "world shifted a lot" is not a usable oracle either.
+* **The pure-yellow centroid is unreliable**: in dark arenas the goal flag is a huge
+  yellow blob and the fighter is small — a blob-size filter is required (worker A).
+* **Screen-space draw records live at `0x818xxxx`** — round integers in 0..200 that change
+  with the room. Not instance state (worker B).
+
+### The one live lead
+
+Worker B found fractional, V-shaped jump arcs in a *live* attract demo:
+
+```
+0x19004f0 (f32)  y: 191.8 -> 52.4 -> 172.5      (a full jump, room space 0..~200)
+0x19004ec (f32)  x: 939.3 -> 936.6              (x sits 4 bytes BEFORE y)
+```
+
+Room widths are 320 and 960, so those are plausible room-space coordinates of a fighter.
+Unproven: verification needs a *controllable* fighter (attract-mode AI moves by itself and
+changes rooms mid-trial, which swamps any write).
+
+### Menu: the workers contradict each other, and that is the real blocker
+
+A's `enter_live_match` worked for me (CPU motion 52.8) but for B it landed in
+MULTIPLAYER → LOCAL → READY (CPU motion 0). B reports the main-menu rows are **inverted**
+(`Up` moves the selection down) and that the default row is SINGLE PLAYER (dot y=124)
+whose submenu defaults to TRAINING (dot y=139). The scrolling menu box means the dot's
+y-position tracks scroll, not item index — so neither of us can name the selected row from
+`dot_y` alone.
+
+Fix for next round: stop deriving the entry from timings/positions. Try the two plausible
+variants (with and without a leading `Up`), and accept the one where **`cpu_motion > 15`
+and a held direction produces a measurable sprite displacement** — a positive gate, not a
+screen guess.

@@ -1,0 +1,18 @@
+{"tag": "a", "goal": "P1.x", "found": false, "addr": null, "width": 4,
+ "camera_vs_position": {
+   "0xc96c5a0": "view/surface: accumulate +300 over 400ms repainted full frame (bbox 0,0-319,199, 3611 px), not a sprite-sized move",
+   "0xc96e1c0": "view/surface: accumulate +300 repainted wide frame (bbox 8,6-317,177, 501 px, world strip shift 0), sprite not isolated",
+   "0xc96e1d8": "view/surface: accumulate +300 repainted wide frame (bbox 8,4-319,176, 337 px)",
+   "0x18ef0fc": "view/draw: accumulate +300 repainted wide frame (bbox 9,9-317,173, 495 px); also fell under BOTH d and a (not input-directional)",
+   "0xbc7b714": "view/draw: accumulate +300 repainted wide frame (bbox 9,7-318,172, 386 px)",
+   "0x94544e0/0x9459be0 (this run: 0x93544e0/0x9359be0)": "timer/counter, NOT camera or position: rose +173.8 over 1.25s while 'd' held but ALSO rose +21.7 over 1.2s while 'a' held; value grows monotonically regardless of input direction"
+ },
+ "world_shift": {"d": -4, "a": 4},
+ "refind": "Enter a live match via nidstate.enter_live_match(0) (verify cpu_motion(0,3)>15 and sprite_present(0)). Hold 'd' 1.25s and dump the 9-11MB rw region around 0x9222000-0x9b20000 (this run) 6 times ~0.25s apart; the hint slots are the f32 family whose low 16 bits are 0x9be0 (0x9459be0 last run -> 0x9359be0 this run). They rise ~140 per 1.25s but are timers, not x. Real P1.x needs a direction check (rise on 'd', fall on 'a') plus accumulate +300 discriminating a sprite-sized repaint; pure drift returns only view/surface/counter state.",
+ "dead_ends": [
+   "Motion-only candidate generation (hold d, keep rising f32) returns view/surface/draw/counter slots; the top 5 all repainted wide or full frames under accumulate +300, none moved the fighter sprite",
+   "Hint pair 0x94544e0/0x9459be0 is not camera/position: monotonic rise under both 'd' and 'a' (this run 0x9353ce0/0x9359be0 rose during an 'a' hold)",
+   "Pure-yellow centroid oracle is unreliable in dark arenas and confuses the goal flag (huge yellow blob) with the fighter; blob-size/y filter needed",
+   "Autonomous CPU motion pollutes drift windows: 0x18ef0fc family fell under both d and a, so direction-only intersection returned 0 slots"
+ ]
+}
