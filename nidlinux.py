@@ -17,6 +17,7 @@ reparenting to systemd).
 """
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -25,13 +26,16 @@ from pathlib import Path
 import numpy as np
 
 HOME = Path.home()
-FARM = HOME / ".nidfarm"
+# One farm per worker: own prefixes, own procs.json, own logs -> agents cannot collide.
+FARM = Path(os.environ.get("NIDFARM") or (HOME / ".nidfarm"))
 STEAM = HOME / ".local/share/Steam"
 PROTON = STEAM / "steamapps/common/Proton - Experimental/proton"
 GAME = FARM / "game/Nidhogg.exe"
 PROCS = FARM / "procs.json"
 SPY = Path(__file__).parent / "spy/nidspy.so"
-DISPLAY_BASE = 10
+DISPLAY_BASE = int(os.environ.get("NID_DISPLAY_BASE", "10"))
+TAG = os.environ.get("NIDTAG", "")
+ART = Path(os.environ.get("NIDART", "/tmp/nidart" + (f"-{TAG}" if TAG else "")))
 
 # ---------------------------------------------------------------- launch
 
@@ -51,8 +55,12 @@ def _ensure_display(disp, size="640x480x24"):
 
 
 def start(n):
-    procs = {}
-    for i in range(n):
+    start_ids(list(range(n)))
+
+
+def start_ids(ids):
+    procs = _pids()
+    for i in ids:
         disp = f":{DISPLAY_BASE + i}"
         _ensure_display(disp)
         prefix = FARM / f"inst/{i}"
@@ -75,15 +83,33 @@ def start(n):
         print(f"instance {i}: display {disp}, wrapper {p.pid}")
     PROCS.write_text(json.dumps(procs, indent=1))
     time.sleep(20)
-    for i in procs:
+    for i in ids:
         print(f"instance {i}: game pid {_game_pid(i)}")
 
 
 def stop():
-    subprocess.run(["pkill", "-x", "Nidhogg.exe"])
-    subprocess.run(["pkill", "-f", "proton[ ]waitforexitandrun"])
+    """Kill everything in THIS farm only (never touches another worker's farm)."""
+    for i in list(_pids()):
+        stop_id(i)
     PROCS.unlink(missing_ok=True)
     print("stopped")
+
+
+def stop_id(i):
+    """Restart-your-own-instance: kills instance i and nothing else."""
+    procs = _pids()
+    info = procs.pop(str(i), None)
+    targets = [info["wrapper"]] if info else []
+    game = _game_pid(i)
+    if game:
+        targets.append(game)
+    for pid in targets:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+    PROCS.write_text(json.dumps(procs, indent=1))
+    time.sleep(2)
 
 
 def _game_pid(i):
@@ -252,6 +278,10 @@ if __name__ == "__main__":
         start(int(sys.argv[2]))
     elif cmd == "stop":
         stop()
+    elif cmd == "start-id":
+        start_ids([int(sys.argv[2])])
+    elif cmd == "stop-id":
+        stop_id(int(sys.argv[2]))
     elif cmd == "status":
         for i in _pids():
             print(f"{i}: display {_pids()[i]['display']} pid {_game_pid(i)}")
