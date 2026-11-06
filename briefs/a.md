@@ -1,72 +1,69 @@
-# Worker A — find P1's horizontal position (`x`) in the process memory
+# Worker A — camera or position? Then find P1's x
 
-You are a reverse-engineering worker on a GameMaker (YYC, native, no symbol table) game
-running headless under Proton. A previous session proved the tooling; your job is one
-concrete result.
+GameMaker YYC game, headless under Proton, no symbol table. Read
+`docs/FINDINGS.md` and `docs/MEMORY.md` first — they are short and they list four
+previous dead ends you must not repeat.
 
-## Setup you already have
+## What is already known (do not re-derive)
 
-* `nidlinux.py` — launches the game, sends keys, takes screenshots, talks to `spy/nidspy.so`
-  (preloaded into the game, reads/writes its own memory: `/proc/<pid>/mem` is refused here).
-* `nidstate.py` — the shared measurement library. **Use it, don't re-invent it.**
-  `enter_match`, `pause`, `frozen_noise`, `pin`, `effect`, `sprite_bbox`, `regions`,
-  `coord_pairs`, `dump_f32`, `read_f`, `restart`.
-* `docs/FINDINGS.md` — everything already measured (read it first, it is short).
-* Your farm is isolated: `NIDFARM`, `NID_DISPLAY_BASE`, `NIDTAG`, `NIDART` are already set
-  in your environment. Your game instance is **id 0 of your own farm**. No other instance
-  exists and nothing else touches your display.
-
-## The one method that works
-
-Pause the game (`Escape` → pause menu). The simulation freezes, the renderer keeps
-drawing. Therefore: nothing drifts by itself (measured 0 px between frames), and a write
-only changes the picture if the renderer reads it as *state* — velocities do nothing
-without ticks. A real position write repaints a **sprite-sized box**; camera/view/surface
-writes repaint the whole 320×200 frame (that is how they identify themselves and how four
-earlier "confirmations" were correctly rejected).
+* **Keys must be held.** `xdotool`'s instant press lasts ~10 ms and can fall between two
+  60 Hz steps; GameMaker then never sees it. `nidstate.held(i, key)` holds 120 ms and is
+  100% reliable. Every key press you make must go through it.
+* **`nidstate.enter_live_match(0)`** reaches a real match (MENU → SINGLE PLAYER → TRAINING
+  → ladder → BEGIN). Verify with `nidstate.cpu_motion(0, 3) > 15` and `sprite_present(0)`.
+  The older `enter_match` lands on a READY screen that is **not a fight**.
+* **The camera follows P1.** The fighter keeps its screen position while the world
+  scrolls. Therefore the yellow centroid is *not* an oracle for input or for motion.
+  A previous worker's whole sweep failed because of this.
+* **Physics rewrites constants every tick** (~60 Hz), so `hold` (pin) can be overwritten.
+  `nidlinux.accumulate(pid, addr, delta, width, ms)` uses `add`, which the game cannot undo.
+* **Pause is suspect**: the pause screen may render a frozen snapshot, so a write while
+  paused may be invisible. Prefer live verification.
+* Addresses change between runs and between rooms. The pair `0x94544e0 / 0x9459be0` from a
+  previous run is a *hint*, not a fact: re-derive candidates yourself.
 
 ## Your goal
 
-Find the float32 in the game heap that holds **P1's x**, and prove it.
+Two rising float32 slots were observed in a live match, rising `+130` while `d` was held
+1.2 s (`0x94544e0`, `0x9459be0`, `0x50000` apart). Decide for each: **camera value or
+instance position?** Then report P1's `x`.
 
 Suggested procedure:
-1. `nidstate.enter_match(0)` → a LOCAL 2-player match. Fighters are drivable there even
-   though the round never starts. Verify with `sprite_present`.
-2. Pause. Confirm `frozen_noise(0) == 0`.
-3. Candidate generation is the hard part, and motion is the wrong generator (it returns
-   camera/view/surface state). Use **structure**: `coord_pairs` gives float32 pairs whose
-   values look like `(x, y)` coordinates. Prune further however you like (stride, value
-   ranges, tag words nearby, records of equal stride).
-4. Test each candidate while paused: `pin(..., value=60)` then `effect(baseline, frame)`.
-   Keep only **sprite-sized** repaints (bbox both sides < 70). Then confirm: pin 300
-   (must repaint differently), pin 60 again (must reproduce the first result exactly),
-   and pin the original value back.
-5. Report the address, the width, and the numbers that prove it.
+1. Enter a live match; confirm the CPU plays.
+2. Confirm input works at the *world* level: capture a frame, `held(i,'d',1.2)`, capture
+   again, and measure the shift of a background strip (e.g. rows 20..80, columns 0..319)
+   with `numpy`: a real hold must shift the world. Do the same with `'a'` and require the
+   shift to reverse. Note in your notes that the sprite's **centroid will not move** —
+   that is the camera following, not a failure.
+3. Re-derive candidates: while holding `d`, take 6 heap dumps ~0.25 s apart
+   (`nidstate.regions`, `nidstate.dump_f32`) and keep f32 slots that rise monotonically by
+   20..700 and are fractional (positions are not round numbers).
+4. Direction check: holding `a` must make the same slots fall by a similar amount.
+5. **Discriminator.** Use `accumulate` with a large delta (e.g. +300 over 400 ms) on one
+   candidate at a time, and compare frames: if the *world* jumps but the fighter stays at
+   the same screen offset, it is camera/view state; if the *fighter's screen position*
+   changes, it is the instance position. Record the frames.
+6. Report every candidate's verdict. If you find a position, also report whether
+   `instance_x - camera_value` is a constant across two different fighter positions — if it
+   is, that constant is the screen offset and the relationship can be used to re-find `x`.
 
 ## Rules
 
-* Work only inside this worktree. Never modify `~/.nidfarm*` other than through
-  `nidlinux.py`, and never run `pkill` on `Nidhogg.exe` (that would be fine here but you
-  should still use `nidstate.restart(0)` / `nidlinux.stop_id(0)` so the habit is safe).
-* Writing arbitrary addresses **will** sometimes segfault the game. That is expected:
-  `nidstate.restart(0)` and carry on.
-* Time budget: **25 minutes wall clock**. Prefer one script (`probe.py`) you iterate on
-  over long one-liners. Keep output terse.
-* A negative result with numbers is a valid, useful result. Do not fake a confirmation —
-  a wrong offset is worse than nothing, because downstream training will trust it.
+* Only your own farm/worktree/display (env vars are set). Restart with
+  `nidstate.restart(0)` when a poke segfaults — expected.
+* Budget: **25 minutes wall clock**. One script (`probe.py`) you iterate on; terse output.
+* A negative result with numbers is a valid answer. Never report an unproven address.
 
 ## Deliverable
 
 `results/a.json`:
 
 ```json
-{"tag": "a", "goal": "P1.x", "found": true, "addr": "0x...", "width": 4,
- "value_when_found": 0.0,
- "evidence": {"probe_values": [60, 300, 60], "changed_px": [0, 0, 0],
-              "bbox": [[0,0],[0,0],[0,0]]},
- "refind": "how to locate it again after a room change",
- "dead_ends": ["short notes on what did not work"]}
+{"tag": "a", "goal": "P1.x", "found": false, "addr": null, "width": 4,
+ "camera_vs_position": {"0x...": "camera: accumulate moved the world, sprite stayed"},
+ "world_shift": {"d": 0, "a": 0},
+ "refind": "how to locate it again",
+ "dead_ends": ["short notes"]}
 ```
 
-Then stop: your final message must be a 5-line summary (found / address / proof / refind /
-dead ends). Do not start any new line of investigation after writing the file.
+Final message: 5 lines max (verdict / address / proof / refind / dead ends). Stop there.

@@ -53,6 +53,48 @@ def restart(i):
     return pid_of(i)
 
 
+def held(i, keysym, wait=1.2):
+    """Key press that ALWAYS registers.
+
+    xdotool's instant press/release (~10 ms) can fall entirely between two 60 Hz steps,
+    and GameMaker's keyboard_check_pressed then never sees it. Holding 120 ms made menu
+    navigation 100% reliable where it used to be a coin flip.
+    """
+    n.key(i, keysym, hold=0.12)
+    time.sleep(wait)
+
+
+def ensure_menu(i, tries=5):
+    """Press Return until a menu (selection dot) is on screen."""
+    for _ in range(tries):
+        if selected_y(i) is not None:
+            return True
+        held(i, "Return", 2.0)
+    return selected_y(i) is not None
+
+
+def enter_live_match(i, begin_attempts=2):
+    """Reach a REAL match: MENU -> SINGLE PLAYER -> TRAINING -> ladder -> BEGIN.
+
+    The READY screen from `enter_match` is NOT a fight: holding a direction only scrolls
+    the camera there, and the fighters never move in world space. This path reaches a
+    match with a live CPU (verify with cpu_motion()).
+    """
+    if not ensure_menu(i):
+        return False
+    held(i, "Up", 1.0)             # MULTIPLAYER (default) -> SINGLE PLAYER
+    held(i, "Return", 1.6)         # -> SINGLE PLAYER screen (HOW TO PLAY / TRAINING)
+    held(i, "Return", 1.6)         # TRAINING -> opponent ladder
+    for _ in range(begin_attempts):
+        for _ in range(4):         # BEGIN sits at the bottom of the ladder
+            held(i, "Down", 0.7)
+        held(i, "Return", 2.0)
+        if sprite_present(i):
+            return True
+        held(i, "Up", 0.7)
+    return sprite_present(i)
+
+
 def enter_match(i, tries=3):
     """Enter-only menu path -> LOCAL 2-player match (fighters are drivable there)."""
     for _ in range(tries):

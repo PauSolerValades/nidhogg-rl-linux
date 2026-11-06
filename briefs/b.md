@@ -1,74 +1,60 @@
-# Worker B — find P1's vertical position (`y`) in the process memory
+# Worker B — find P1's `y`, then `x` from the same struct
 
-You are a reverse-engineering worker on a GameMaker (YYC, native, no symbol table) game
-running headless under Proton. A previous session proved the tooling; your job is one
-concrete result, approached through the **vertical axis on purpose**.
+GameMaker YYC game, headless under Proton, no symbol table. Read `docs/FINDINGS.md` and
+`docs/MEMORY.md` first — they are short and list four previous dead ends.
 
-## Why you go after `y` and not `x`
+## What is already known (do not re-derive)
 
-Another worker is hunting `x` via horizontal motion. The horizontal axis is contaminated:
-the camera follows P1, so writing a horizontal value moves the whole world and "the sprite
-moved" becomes ambiguous. The vertical axis has no such confound — there is no vertical
-camera follow during a match. So: identify the fighter's `y`, then walk the struct from
-`y` to `x`. Two independent routes to the same struct is how we get confidence.
-
-## Setup you already have
-
-* `nidlinux.py` — launches the game, sends keys, takes screenshots, talks to `spy/nidspy.so`
-  (preloaded into the game, reads/writes its own memory: `/proc/<pid>/mem` is refused here).
-* `nidstate.py` — the shared measurement library. **Use it, don't re-invent it.**
-  `enter_match`, `pause`, `frozen_noise`, `pin`, `effect`, `sprite_bbox`, `regions`,
-  `coord_pairs`, `dump_f32`, `read_f`, `restart`.
-* `docs/FINDINGS.md` — everything already measured (read it first, it is short).
-* Your farm is isolated: `NIDFARM`, `NID_DISPLAY_BASE`, `NIDTAG`, `NIDART` are already set.
-  Your game instance is **id 0 of your own farm**. Nothing else uses your display.
-
-## The method
-
-Pause the game (`Escape` → pause menu): the simulation freezes, the renderer keeps drawing.
-Nothing drifts (measured 0 px between frames), and a write only changes the picture if the
-renderer reads it as state. A position write repaints a **sprite-sized box**; camera/view/
-surface writes repaint the whole frame.
+* **Keys must be held.** `xdotool`'s instant press (~10 ms) can fall between two 60 Hz
+  steps and GameMaker never sees it. Use `nidstate.held(i, key)` (holds 120 ms) for every
+  key press. This made menu navigation 100% reliable.
+* **`nidstate.enter_live_match(0)`** reaches a real match (MENU → SINGLE PLAYER → TRAINING
+  → ladder → BEGIN). Verify with `cpu_motion(0,3) > 15` and `sprite_present(0)`.
+* **The camera follows P1 horizontally** — which is exactly why you are given the
+  **vertical axis**: there is no vertical camera follow in a jump, so a jump is a clean,
+  unambiguous stimulus on screen.
+* Physics rewrites constants every tick, so `hold` (pin) can lose; `nidlinux.accumulate`
+  (`add`) cannot be undone.
+* Pause may render a frozen snapshot — do not rely on paused writes.
 
 ## Your goal
 
-Find the float32 holding **P1's y**, and prove it. Then find `x` relative to it.
+Find P1's `y` in memory using the jump as the stimulus, then report `x` from the same
+struct. You are the independent route: worker A is going after `x` horizontally, so if you
+land on the same struct by finding `y`, that is mutual confirmation.
 
 Suggested procedure:
-1. `nidstate.enter_match(0)` → LOCAL 2-player match (round never starts; fighters drivable).
-2. Pause. Confirm `frozen_noise(0) == 0`. Note `sprite_bbox(0)` as the baseline: you need
-   the sprite's **y extent** to move, not just any pixels to change.
-3. Candidates: floats whose value lies in a plausible `y` range (roughly 0..250) — you may
-   use `coord_pairs` (it returns `(x, y)` pair candidates) or sweep your own way.
-4. Test while paused: `pin(..., value=30)` (a value clearly above the ground line) and
-   require the **sprite's y box to shift up** by a convincing margin, reproducibly
-   (pin 30, then the original, then 30 again — same result twice). A change that moves the
-   whole frame is a view/surface write, not `y`.
-5. Once `y` is proven, dump the surrounding memory and locate `x` at a fixed offset from
-   it (report the offset). Verify `x` the same way but along the horizontal axis.
+1. Enter a live match; confirm the CPU plays.
+2. Find the jump key. Candidates: `w`, `Up`, `space`, `j`, `k`, `l`, `i`. Test each with
+   `held(i, key, 0.5)` and measure the **yellow sprite's screen y** (rows only). A jump
+   moves it up tens of pixels in ~0.2 s. (Ignore horizontal motion; the camera lies.)
+3. With the jump key known: take 6 heap dumps ~0.15 s apart while the fighter is airborne
+   and keep f32 slots that **fall then rise** (a ballistic arc) within 0..300.
+4. Verify with `accumulate` on the candidate: a negative delta while airborne should make
+   the sprite climb; a positive one should push it down. Compare sprite y before/after.
+5. Then dump ±0x40 around `y` and look for a neighbouring float in 0..1100 that tracks the
+   fighter horizontally (hold the move key, watch it change) — that is `x`. Report its
+   offset from `y`.
+6. If the jump turns out not to be drivable in that match, say so with the evidence
+   (sprite y before/after for every key you tried) — that is a useful negative.
 
 ## Rules
 
-* Work only inside this worktree. Use `nidstate.restart(0)` / `nidlinux.stop_id(0)`; do not
-  `pkill` globally.
-* Writing arbitrary addresses **will** sometimes segfault the game. Expected:
-  `nidstate.restart(0)` and continue.
-* Time budget: **25 minutes wall clock**. Prefer one script (`probe.py`) you iterate on.
-  Keep output terse.
-* A negative result with numbers is valid and useful. Never report an unproven offset.
+* Only your own farm/worktree/display (env vars are set). `nidstate.restart(0)` after a
+  segfault — expected.
+* Budget: **25 minutes wall clock**. One `probe.py` you iterate on; terse output.
+* Never report an unproven address; a negative with numbers is a valid answer.
 
 ## Deliverable
 
 `results/b.json`:
 
 ```json
-{"tag": "b", "goal": "P1.y", "found": true, "addr": "0x...", "width": 4,
- "x_offset_from_y": 16,
- "evidence": {"probe_values": [30, 0, 30], "sprite_y": [0, 0, 0],
-              "bbox_wh": [[0,0],[0,0],[0,0]]},
- "refind": "how to locate it again after a room change",
- "dead_ends": ["short notes on what did not work"]}
+{"tag": "b", "goal": "P1.y", "found": false, "addr": null, "width": 4,
+ "jump_key": null, "sprite_y": {"before": 0, "after": 0},
+ "x_offset_from_y": null,
+ "refind": "how to locate it again",
+ "dead_ends": ["short notes"]}
 ```
 
-Then stop: your final message must be a 5-line summary (found / address / proof / x offset /
-dead ends). Do not start a new line of investigation after writing the file.
+Final message: 5 lines max (verdict / jump key / address / proof / dead ends). Stop there.
