@@ -166,3 +166,39 @@ A fixed camera removes the camera algebra entirely: room `x` maps **1:1** to scr
 so the fighter record is simply the one whose `x` delta equals the sprite's screen-x delta
 while `d`/`a` is held, verified over many samples with no room changes. That is a far
 stronger test than the difference trick, and it needs no writes.
+
+## Round 5 — P1's record is identified and proven (READY, fixed camera)
+
+```
+P1 record: 0x191c400     x @ +0xEC     y @ +0xF0 (=128, feet)     dup x @ +0xFC
+siblings:  idem 0x191c800 (sword, same position)   0x191c600 (arm, x offset -8)
+```
+
+Method: on the LOCAL READY screen the camera is **fixed** (`world shift 0`), so room x maps
+1:1 to screen x. Alternate `d`/`a` eight times and keep the record whose `x` delta equals
+the yellow sprite's screen-x delta:
+
+| transition | sprite x | record x | error |
+|---|---|---|---|
+| 1..8 | 21.7 ↔ 78.1 | 21 ↔ 78 | **0.15 – 1.78 px** (8/8 pass) |
+
+Worst error 1.78 px, camera offset 0.1 px. That is the first *proven* fighter address in
+this project.
+
+### Two traps this exposed
+
+* **READY positions are integers** (screen space). The `fighter_records` fractional filter
+  (calibrated on attract-mode room coords) misses it entirely — scan all 0x200 records and
+  match deltas instead.
+* The default yellow centroid is biased ~1.5 px near the left wall by the yellow floor
+  strip at y≈126–127: crop above it.
+
+### What is still missing, and the shortest way to it
+
+`y` is unverified here (`space` does not jump on READY), and addresses move per room. But
+round 5 hands us the thing every previous round lacked: **a ground-truth fighter record**.
+
+Next step is therefore small: read the **object-type field** from `0x191c400` (compare it
+with the sword at `0x191c800`, the arm at `0x191c600` and a particle record), then find
+instances by type in any room. That is the discriminator that has blocked identification
+since round 1 — and it converts to the full state map (P1, P2, sword) immediately.

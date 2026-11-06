@@ -1,0 +1,19 @@
+{
+ "tag": "a",
+ "goal": "P1 record on READY",
+ "found": true,
+ "addr": "0x191c400",
+ "x_offset": "0xEC",
+ "y_offset": "0xF0",
+ "camera_offset": 0.1,
+ "errors_px": [0.57, 1.55, 1.55, 1.02, 1.78, 0.48, 0.15, 0.15],
+ "sprite_x_series": [21.7, 78.13, 19.58, 78.13, 20.11, 78.89, 21.41, 78.56, 21.41],
+ "record_x_series": [21.0, 78.0, 21.0, 78.0, 21.0, 78.0, 21.0, 78.0, 21.0],
+ "refind": "READY screen (enter_match), biggest rw heap 0x16a0000..0x8200000, stride 0x200. P1 body: x@+0xEC (== duplicate x@+0xFC) tracks yellow sprite d/a deltas 1:1, y@+0xF0 == 128 (feet). Values are INTEGER screen-space on READY (not the fractional room-space of attract mode), so ns.fighter_records' fractional filter misses it; scan all 0x200 records with |dx - sprite_dx| < 3 across 8 d/a holds instead.",
+ "dead_ends": [
+  "fractional filter in fighter_records excludes the READY fighter (positions are integer here)",
+  "default yellow_screen_x biased ~1.5px near left wall by the yellow floor strip at y126-127; exclude y>=126",
+  "two sibling draw quads also track: 0x191c800 (sword, same x/y) and 0x191c600 (arm strip, x offset -8)",
+  "space does not jump on READY (sprite_y stays ~114), so y@+0xF0 vertical check is N/A here"
+ ]
+}
