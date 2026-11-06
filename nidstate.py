@@ -308,3 +308,51 @@ def cpu_motion(i, seconds=4.0):
             xs.append(x)
         time.sleep(0.4)
     return (max(xs) - min(xs)) if len(xs) >= 3 else 0.0
+
+
+# ---------------------------------------------------------------- fighter records (proven layout)
+#
+# Worker C proved this layout from attract-mode jump arcs, with no menu and no input:
+#   record stride 0x200, x at +0xEC, y at +0xF0 (both float32, room space, fractional),
+#   duplicates at +0xFC / +0x100, bbox candidates around +0x120..+0x12C.
+# x@+0xEC was seen walking 787.4 -> 758.3; y@+0xF0 arcing 111.4 -> 12.1 -> 143.8.
+# Addresses shift per room; the offsets do not.
+
+REC = 0x200
+X_OFF = 0xEC
+Y_OFF = 0xF0
+
+
+def biggest_heap(pid):
+    return max(regions(pid), key=lambda r: r[1] - r[0])
+
+
+def fighter_records(pid, heap=None):
+    """[(base_addr, x, y)] for every 0x200 record with room-plausible fractional state."""
+    a, b = heap or biggest_heap(pid)
+    v = dump_f32(pid, a, b - a)
+    if v is None:
+        return []
+    idx = np.arange(0, len(v) - (Y_OFF // 4) - 1, REC // 4)
+    x = v[idx + X_OFF // 4]
+    y = v[idx + Y_OFF // 4]
+    with np.errstate(invalid="ignore"):
+        ok = (np.isfinite(x) & np.isfinite(y)
+              & (x > 0) & (x < 1100) & (y > 15) & (y < 260)
+              & (x != np.round(x)) & (y != np.round(y)))
+    sel = np.nonzero(ok)[0]
+    return [(a + int(idx[j]) * 4, float(x[j]), float(y[j])) for j in sel]
+
+
+def moving_fighters(pid, wait=0.45, lo=1.0, hi=120.0):
+    """The records whose x moved between two dumps: those are the fighters."""
+    heap = biggest_heap(pid)
+    before = {a: (x, y) for a, x, y in fighter_records(pid, heap)}
+    time.sleep(wait)
+    after = {a: (x, y) for a, x, y in fighter_records(pid, heap)}
+    out = []
+    for a in before.keys() & after.keys():
+        dx = after[a][0] - before[a][0]
+        if lo <= abs(dx) <= hi:
+            out.append((a, before[a], after[a], dx))
+    return out

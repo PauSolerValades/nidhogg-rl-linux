@@ -88,3 +88,51 @@ Fix for next round: stop deriving the entry from timings/positions. Try the two 
 variants (with and without a leading `Up`), and accept the one where **`cpu_motion > 15`
 and a held direction produces a measurable sprite displacement** — a positive gate, not a
 screen guess.
+
+## Round 3 — the layout is proven; every oracle is now in doubt
+
+### Proven (worker C, no menu, no input — attract demo only)
+
+```
+record stride 0x200   x @ +0xEC   y @ +0xF0        (float32, fractional, room space)
+duplicates           x @ +0xFC   y @ +0x100
+```
+
+Evidence: a full jump arc `y 111.4 -> 12.1 -> 143.8` and a walk `x 787.4 -> 758.3`,
+captured with no writes at all, by motion profile alone. Re-find recipe: dump the ~109 MB
+anonymous rw region as f32, step 0x200, keep records with `x@+0xEC` in (0,960) and
+`y@+0xF0` in (15,260), both fractional; the fighters are the ones that move. Addresses
+move per room, offsets do not.
+
+### Not proven: which of the ~300 records are the two fighters
+
+The layout is shared by **particles and decoration** (a trail of records stepping x
+106→113 at y≈16, chandeliers with a 21×42 box at x=904 but bbox at x=613). The bbox filter
+(`+0x120..+0x12C`) leaves 15 records, all integer-valued — static decoration, not fighters.
+
+### The spy was silently broken until worker B fixed it
+
+`add`/`hold` parsed `addr ms hex` while the Python side sends `addr hex ms`. So:
+`add` wrote nothing (a no-op), and `hold` blocked the spy thread for ~0x3f800000 ms
+(≈12 days) per call, which is what made later memory reads time out. Fixed in `spy/nidspy.c`
+and committed. **Consequence: worker A's round-3 poke conclusions are void** — it was
+testing with a no-op accumulate.
+
+### Both of my entry gates were wrong (worker A)
+
+> `cpu_motion + sprite_present` pass in the attract demo too.
+
+So "CPU moved 52 px" never proved we were in a match. And A measured `world_shift = 0` on
+every screen it reached: we have **never** had a verified controllable fighter. Worker B's
+`space`-jump result (`sprite_y 113 -> 52`) is therefore suspect too — either it was a
+genuine controllable state or the demo jumping on its own.
+
+### Next discriminator (cheap, input-free, camera-invariant)
+
+Subtract, don't compare. The two fighters' room-space `x` difference must equal the
+**screen-space** `x` difference between the yellow and orange sprites (a pure camera
+translate cancels out). So: for every pair of records, check
+`|(x_i - x_j) - (sprite_x_yellow - sprite_x_orange)| < few px`, and require the pair to
+share an object-type field. ~300 records = 45k pairs, one dump, no input, no menu.
+Confirm with the jump: both fighters arc together, so `y_i - y_j` should track the sprites'
+vertical difference.

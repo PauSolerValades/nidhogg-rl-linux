@@ -1,0 +1,22 @@
+{
+  "tag": "a",
+  "goal": "P1.x",
+  "found": false,
+  "addr": null,
+  "width": 4,
+  "camera_vs_position": {
+    "0xb6bf210": "derived/draw record: rises 28->143 under 'd', falls under 'a'; accumulate +300 over 400ms did NOT move the yellow fighter (screen x 22.7 -> 22.4), world_shift 0; re-test segfaulted the game",
+    "0xb6bf218": "derived/draw record: same d/a motion as 0xb6bf210; accumulate +300 did NOT move fighter",
+    "0xb6b6f10": "derived/draw record: same d/a motion; accumulate +300 did NOT move fighter",
+    "0xb6b7d18": "derived/draw record: moved with d/a but not directionally clean; accumulate +300 did NOT move fighter",
+    "0xa41df20": "timer/counter, NOT camera or position: monotonic +25 per 1.3s under BOTH 'a' and 'd' (1978->2003->2030->2058), 0x5000-spaced twin read 0.0 after restart"
+  },
+  "world_shift": {"d": 0, "a": 0},
+  "refind": "On this Linux build nidstate.enter_live_match(0) does NOT reach a controllable match: it lands in attract/demo (cpu_motion 64-76, sprite_present true, but the pure-yellow fighter ignores d/a). Skipping enter_live_match's leading 'Up' (default main-menu row y=129 is SINGLE PLAYER; Return -> y=139 TRAINING -> Return -> ladder -> 4x Up + Return) reaches the LOCAL READY screen (cpu_motion ~0.6) where the yellow fighter IS drivable on a fixed camera: screen x 22 -> 90 -> 22 under d then a, world shift 0. Motion scan there (hold 'd', 6 dumps ~0.25s apart, f32 rising 30..200) returns the 0xb6bf210 family in region 0xabf0000-0xbbc0000; these are (x,y) draw-record copies, not the instance x.",
+  "dead_ends": [
+    "enter_live_match + cpu_motion>15 + sprite_present is NOT a live-match proof on this build: the attract demo also passes both, and the pure-yellow fighter there ignores d/a",
+    "world-shift oracle unusable on the reached screens: background strip (rows 20..80) cross-correlation gives d=0, a=0 both in attract and on the drivable READY screen (camera fixed, not following P1)",
+    "motion-only candidate generation again returns derived/draw records (0xb6bf210/0xb6bf218/0xb6b6f10, y~127 constant, x 28->143 under d), and accumulate +300 moves neither the sprite nor the world",
+    "0xa41df20 (this run's analog of the 0x94544e0/0x9459be0 hint) is a monotonic timer rising under both d and a; addresses shifted between runs/rooms (reads 0.0 after restart)"
+  ]
+}

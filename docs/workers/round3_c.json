@@ -1,0 +1,37 @@
+{
+  "tag": "c",
+  "goal": "fighter record layout",
+  "records": [
+    {
+      "addr": "0x18cd600",
+      "role": "unknown",
+      "x": "+0xec",
+      "y": "+0xf0",
+      "motion": "jump",
+      "note": "full jump arc captured: y 111.4 -> 12.1 (apex) -> 143.8, x 711.8 -> 650.1 drift; proves x@+0xec / y@+0xf0"
+    },
+    {
+      "addr": "0x190c600",
+      "role": "unknown",
+      "x": "+0xec",
+      "y": "+0xf0",
+      "motion": "walk",
+      "note": "smooth leftward walk x 787.4 -> 758.3, y ~193 -> 184 (ground level)"
+    }
+  ],
+  "strides": [512],
+  "fields": [
+    {"addr": "+0x0ec", "what": "x (room space, f32)", "proven": true},
+    {"addr": "+0x0f0", "what": "y (room space, f32)", "proven": true},
+    {"addr": "+0x0fc", "what": "x duplicate (xprevious or bbox copy)", "proven": true},
+    {"addr": "+0x100", "what": "y duplicate", "proven": true},
+    {"addr": "+0x120", "what": "bbox left", "proven": false},
+    {"addr": "+0x124", "what": "bbox top", "proven": false},
+    {"addr": "+0x128", "what": "bbox right", "proven": false},
+    {"addr": "+0x12c", "what": "bbox bottom", "proven": false},
+    {"addr": "+0x0d0", "what": "room width / view extent (saw 320, 960, 787)", "proven": false},
+    {"addr": "+0x000", "what": "object-type/size constant 10.4024", "proven": false},
+    {"addr": "+0x0c8", "what": "constant 1.0", "proven": false}
+  ],
+  "refind": "pid = game pid; heap = the ~109MB anonymous rw region starting 0x16a0000 in /proc/pid/maps. Dump heap as f32, scan every 0x200-aligned record: keep records where f32@+0xec is fractional and in (0,960) and f32@+0xf0 is fractional and in (15,260). Dump again 0.4s later; the fighters are the records whose x@+0xec changed smoothly by 1.5..80 (walk/jump) while the ~350 other candidate records are static; a jump shows y@+0xf0 as a V-shape. Addresses move per room, offsets do not."
+}

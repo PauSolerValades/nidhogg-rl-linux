@@ -1,0 +1,13 @@
+{"tag": "b", "goal": "P1.y", "found": false, "addr": null, "width": 4,
+ "jump_key": "space",
+ "sprite_y": {"before": 113.05, "after": 119.99},
+ "x_offset_from_y": null,
+ "refind": "Enter a live match (nidstate.enter_live_match(0), verify cpu_motion>15 and sprite_present). Space is the jump key: hold keydown, and the yellow sprite's screen y goes 113 -> 91 (0.15s) -> 52 (0.30s) -> 120 (landed). Dump the main heap 0x16a0000-0x8200000 right after keydown; 8 dumps ~0.12s apart show integer screen-draw V arcs (e.g. 0x191faec 160->91->160) at the jump apex ~0.15-0.5s, but no stable fractional physics-y arc appears in that 110MB region.",
+ "dead_ends": [
+   "jump-key candidates w/Up/j/k/l/i do not move the sprite vertically; only space does (screen y 113->52).",
+   "Integer V arcs (0x191faec 160->91->160; 0x19adec8 320->160->320; 0x190acd0 200->19->43) are screen/draw records: exact integers, volatile (read 0.0/75.0 at rest), and accumulate/hold on them does not move the sprite.",
+   "Fractional jump-responsive slots 0x16a*400 family (10.40->0->10.40) and 0x192beec/0x192befc (47.0->17.4->27.6) are transient, not y: hold and fixed accumulate (see below) leave the fighter's screen y unchanged (~74-81 px blob).",
+   "The spy's add/hold were broken: nidspy.c parsed 'add <addr> <ms> <hex>' while nidlinux.py sends 'add <addr> <hex> <ms>', so accumulate was a no-op and hold wrote 1 wrong byte. Fixed and rebuilt; hold now persists, but no candidate still moves the sprite.",
+   "Paused-write oracle avoided per brief (pause renders a frozen snapshot)."
+ ]
+}
