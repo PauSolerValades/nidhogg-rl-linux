@@ -1,0 +1,15 @@
+{"tag": "a", "goal": "P1.x", "found": false, "addr": null, "width": 4,
+ "value_when_found": null,
+ "evidence": {"probe_values": [60, 300, 60], "changed_px": [32, 22, 13],
+              "bbox": [[97, 24], [97, 6], [68, 7]],
+              "best_candidate": "0x01918aec",
+              "sprite_left_before_after_pins": [111, 111, 111]},
+ "refind": "Could not locate P1.x. On the LOCAL READY screen holding 'd' scrolls the view/camera (whole scene shifts, fighter's instance x stays fixed), so motion cannot generate the instance x here. A whole-heap float32 diff (0x16a0000-0x8200000, 112MB) during a 'd' hold found only 16 slots changing 5-45 px, all derived copies: draw quads at 0x200 stride (0x01918xxx/0x0191cxxx, values 116/118/119/126), a dirty-rect array (0x0817f2xx/0x0817f3xx, values 116/119/127/159) and two 4413.0 counters. None of these repaints the sprite when pinned. Next: hook the renderer (LD_PRELOAD is already ours) to read the exact position the draw call uses, or scan for a static float32 x ~117 with y ~102 whose write moves the sprite while paused (my static-value pin tests at 0x017716a8/0x017879a8/0x018fd72c/0x01a3f64c/0x01d7242c all left P1 at bbox-left 111).",
+ "dead_ends": [
+   "motion generation: 'd' hold moves view/camera not instance x; diff returns draw quads, dirty rects, counters",
+   "0x01918aec draw-quad x (126): pin 60/300/60 -> changed 32/22/13 px but sprite bbox-left stayed 111 (not a position)",
+   "0x0817f2a0 dirty-rect (116->131): pin 60 -> sprite stayed at 111",
+   "static float32 x candidates 116.0/119.0 at 0x017716a8, 0x017879a8, 0x018fd72c, 0x01a3f64c, 0x01d7242c: pin 60 -> no sprite move",
+   "float64 scan of heap for x in [100,150] moving 5-45 px: 0 slots (positions are float32, consistent with prior findings)"
+ ]
+}

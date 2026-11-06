@@ -1,0 +1,27 @@
+{
+  "tag": "b",
+  "goal": "P1.y",
+  "found": false,
+  "addr": "0x8188614",
+  "width": 4,
+  "x_offset_from_y": -4,
+  "evidence": {
+    "candidate_y_addr": "0x8188614",
+    "candidate_value": 127.0,
+    "screen_feet_y": 127,
+    "rewritten_by_physics_when_unpaused": true,
+    "adjacent_x_addr": "0x8188610",
+    "adjacent_x_value": 313.0,
+    "probe_values": [30, 127, 30],
+    "sprite_y_box_paused": [[24, 126, 71, 127], [24, 126, 71, 127], [24, 126, 71, 127]],
+    "sprite_y_box_unpaused": [[24, 103, 128, 127], [24, 103, 128, 127], [24, 103, 128, 127]]
+  },
+  "refind": "Hold Left/Right ~0.8s and dump the heap twice; the only f32 slots in [0,1100] that change by 40..150 are 0x81885f0, 0x8188610, 0x8188780, 0x81887a0. The physics-live y (rewritten to 127 each unpaused frame) sits at 0x8188614, 4 bytes past 0x8188610.",
+  "dead_ends": [
+    "0x200-stride structs at 0x191c0ec have (x,y) at +0xec/+0xf0 (macOS layout) but their y is NOT rewritten by physics and pinning them moves nothing -> they are non-fighter instances.",
+    "Pinning any candidate y (0x191c0f0, 0x191c2f0, 0x191c4f0, 0x81885f4, 0x8188614, 0x8188784, 0x81887a4) to 30 while paused did NOT move the yellow sprite's y box.",
+    "Pinning the known view variable 0x1910af0 to 260 while paused changes 0 pixels: the Escape pause menu appears to draw a frozen snapshot, so the pin-while-paused oracle may not re-read instance state.",
+    "Unpaused, the game overwrites 0x8188614 back to 127 each frame (60Hz physics beats the 2kHz hold), so an unpaused pin test also cannot move the sprite.",
+    "coord_pairs gives 47355 (x,y) pairs; too many to sweep without a working paused oracle."
+  ]
+}
