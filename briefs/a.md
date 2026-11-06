@@ -1,73 +1,76 @@
-# Worker A — which two of the ~300 records are P1 and P2?
+# Worker A — find P1's record on the READY screen (fixed camera, 1:1 mapping)
 
 GameMaker YYC game, headless under Proton, no symbol table. Read `docs/MEMORY.md` first.
 
-## The layout is proven. Your job is to pick the fighters out of the crowd.
+## The layout is proven; the arena in previous rounds was wrong
 
 ```
-record stride 0x200    x @ +0xEC    y @ +0xF0      (float32, fractional, room space)
+record stride 0x200    x @ +0xEC    y @ +0xF0     (float32, fractional, room space)
 duplicates            x @ +0xFC    y @ +0x100
 ```
 
-Proven by worker C from attract-mode jump arcs and walks, with no writes and no menu.
-But ~300 records share this layout: particles (a trail stepping x 106→113 at y≈16),
-chandeliers (21×42 box at x=904 whose bbox sits at x=613), arrows, decorations. A bbox
-filter left 15 records and all were integer-valued props, so bbox is not the answer.
+Previous rounds failed because they used the **attract demo**, which changes rooms every
+few seconds — records teleport (`x 944 -> 79` between dumps 0.3 s apart) so nothing stays
+comparable, and pair-matching on geometry alone is chance (a small sprite delta matched 562
+record pairs).
 
-## Do NOT do any of these — they have burned four workers already
-
-* **Do not touch the menu.** No entry attempt has ever been verified controllable, and
-  `cpu_motion + sprite_present` both pass on the attract demo, so they prove nothing.
-* **Do not use `poke` / `hold` / `accumulate`.** You do not need a single write. (The spy
-  had an argument-order bug that made `add` a no-op and `hold` block for ~12 days; it is
-  fixed, but writes are not your tool here.)
-
-## Your discriminator: subtract, don't compare
-
-A camera translate cancels in a difference. So for the true fighters:
+**Use the LOCAL READY screen instead.** It has been measured drivable — yellow screen x
+`22 -> 90 -> 22` under `d` then `a` — and its camera is **fixed** (world shift 0). A fixed
+camera means room `x` equals screen `x` 1:1, so you do not need any camera algebra:
 
 ```
-(x_i - x_j)  ==  (sprite_x_yellow - sprite_x_orange)      (same for y)
+the fighter record is the one whose x@+0xEC changes by the SAME amount as
+the yellow sprite's screen x, every single time, while you alternate d/a
 ```
 
-The sprites give you that difference with no memory at all:
-P1 is pure yellow `(255,255,0)`, P2 is orange `(255,160,64)`.
+## Getting there (and proving it)
+
+`nidstate.enter_match(0)` presses Return six times with held keys and returns only if the
+fighter is drivable (`drivable(0,'d') > 15`). If it returns False, restart
+(`nidstate.restart(0)`) and retry — do not debug the menu, and never use attract mode.
+
+Then prove the two preconditions yourself, before any memory work:
+1. `drivable(0,'d') > 15` and then `drivable(0,'a') > 15` (P1 responds to both).
+2. **Fixed camera**: capture a frame, hold `d` 0.7 s, capture again, and compare a
+   background strip (rows 20..80) — it must NOT shift. If it does shift, you are on the
+   wrong screen and the 1:1 assumption is void: restart.
+
+## Your goal
+
+Identify the one record whose `x@+0xEC` tracks the yellow sprite 1:1, and report it.
 
 Suggested procedure:
-1. Fresh instance, **attract mode** — just wait ~20 s, touch nothing. The demo fighters
-   move on their own.
-2. Sprite positions: build both masks and take a **robust centroid** — the goal flag is a
-   big yellow blob too, so reject blobs far larger than a fighter (size and y filters).
-   Sanity-check: the difference must be roughly stable across consecutive frames.
-3. Records: dump the ~109 MB anonymous rw region as f32, step 0x200, keep records with
-   fractional `x@+0xEC ∈ (0,960)` and `y@+0xF0 ∈ (15,260)`.
-4. Pair search: all pairs, keep those where `|(x_i - x_j) - dx_sprites| < 4`  **and**
-   `|(y_i - y_j) - dy_sprites| < 4`. Expect a handful.
-5. Confirm over time, not once: take 6 samples ~0.4 s apart and require the *same* pair to
-   keep matching the sprite difference as the fighters move. That is the real test — the
-   camera changes between samples and must cancel every time.
-6. Then look for a field that marks both as the same object type (compare bytes near +0x00
-   and around the bbox at +0x120..+0x12C between your two records vs a particle record).
-   Report the offset and whether it is shared by exactly two records.
+1. Reach and verify READY as above.
+2. Robust sprite x with `nidstate.yellow_screen_x(0)` (pure yellow, play area, densest
+   24-px cluster — the goal flag is a big yellow blob and breaks a plain centroid).
+3. Alternate: hold `d` 0.5 s, sample; hold `a` 0.5 s, sample. Do this 8 times. After each
+   hold, record the sprite x **and** read every candidate record's `x@+0xEC`
+   (`nidstate.fighter_records` gives you the list; cache the addresses for the session
+   since READY does not change rooms).
+4. Match: the fighter's record must satisfy `|Δrecord_x − Δsprite_x| < 3 px` on at least
+   7 of the 8 transitions, with a constant offset (that offset is the camera letterbox).
+   Report the record, the offset, and the per-transition errors.
+5. If it also works vertically, verify `y@+0xF0` with a jump (`space` is the jump key) and
+   report both.
 
 ## Rules
 
-* Only your own farm/worktree/display (env vars are set). `nidstate.restart(0)` if needed.
-* Budget: **25 minutes**. One `pairhunt.py` you iterate on; terse output.
-* A negative with numbers is a valid answer. Never report an unproven pair as proven.
+* **No writes.** Do not use `poke`, `hold` or `accumulate` — this task needs none, and the
+  spy's write path has burned three rounds.
+* Only your own farm/worktree/display (env vars are set). `nidstate.restart(0)` if the game
+  dies or the gate fails.
+* Budget: **25 minutes**. One `readyhunt.py` you iterate on; terse output.
+* A negative with numbers is valid. Never report an unproven record.
 
 ## Deliverable
 
 `results/a.json`:
 
 ```json
-{"tag": "a", "goal": "identify P1/P2 records", "found": false,
- "pair": [{"addr": "0x...", "x": 0, "y": 0}, {"addr": "0x...", "x": 0, "y": 0}],
- "sprite_delta": [0, 0], "match_error_px": [0, 0, 0, 0, 0, 0],
- "type_field": {"offset": "0x...", "shared_by_two": false},
- "refind": "how to pick the fighters again after a room change",
- "dead_ends": ["short notes"]}
+{"tag": "a", "goal": "P1 record on READY", "found": false,
+ "addr": null, "x_offset": "0xEC", "y_offset": "0xF0", "camera_offset": 0,
+ "errors_px": [0, 0, 0, 0, 0, 0, 0, 0], "sprite_x_series": [], "record_x_series": [],
+ "refind": "how to pick it again", "dead_ends": ["short notes"]}
 ```
 
-Final message: 5 lines max (pair found / addresses / error across samples / type field /
-dead ends). Stop there.
+Final message: 5 lines max (record / offset / worst error / vertical check / dead ends).

@@ -95,15 +95,53 @@ def enter_live_match(i, begin_attempts=2):
     return sprite_present(i)
 
 
-def enter_match(i, tries=3):
-    """Enter-only menu path -> LOCAL 2-player match (fighters are drivable there)."""
+def yellow_screen_x(i, name="yx", y0=40, y1=165):
+    """Robust screen x of P1: pure yellow, play area only, densest 24-px column cluster.
+
+    A plain centroid is not enough: in dark arenas the goal flag is a huge yellow blob and
+    the fighter is small, so the centroid lands between them.
+    """
+    a = frame(i, name)
+    r, g, b = (a[:, :, k].astype(int) for k in range(3))
+    m = (r > 240) & (g > 240) & (b < 80)
+    m[:y0, :] = False
+    m[y1:, :] = False
+    ys, xs = np.nonzero(m)
+    if len(xs) < 15:
+        return None
+    hist = np.bincount(xs, minlength=320)
+    win = np.convolve(hist, np.ones(24), "same")
+    peak = int(np.argmax(win))
+    lo, hi = max(0, peak - 14), min(320, peak + 14)
+    sel = xs[(xs >= lo) & (xs <= hi)]
+    return float(sel.mean()) if len(sel) else None
+
+
+def drivable(i, key="d", hold=0.7, min_px=20.0):
+    """Positive gate: does holding a direction actually move P1 on screen?
+
+    Attract mode and the READY screen both show fighters and both pass
+    `sprite_present`/`cpu_motion`, so neither proves control. This does.
+    """
+    x0 = yellow_screen_x(i, "dr0")
+    if x0 is None:
+        return 0.0
+    n.key(i, key, hold=hold)
+    time.sleep(0.3)
+    x1 = yellow_screen_x(i, "dr1")
+    if x1 is None:
+        return 0.0
+    return abs(x1 - x0)
+
+
+def enter_match(i, tries=4):
+    """Enter-only menu path -> LOCAL READY screen, verified drivable with held keys."""
     for _ in range(tries):
         time.sleep(WARMUP)
         for _ in range(6):
-            n.key(i, "Return")
-            time.sleep(1.5)
+            held(i, "Return", 1.5)
         time.sleep(0.5)
-        if sprite_present(i):
+        if sprite_present(i) and drivable(i, "d") > 15:
             return True
     return False
 
