@@ -130,3 +130,36 @@ Fix candidates, cheapest first:
    (`brightfrac` small but nonzero) and a straight border, which the castle level lacks.
 3. Detect the selection bar (works on the pause menu) and use "the bar moved by exactly
    one row" as the acknowledgement that a Down landed.
+
+## 2026-11: motion found, but it was the camera
+
+Widening the drift window (fighter moves **~115 px/s**, not the 12 px/s the macOS notes
+recorded) finally produced candidates while holding `d`:
+
+```
+0x191c0d0  f4  688 -> 749   (rising ~20 per 0.2 s sample)
+0x191c4d0  f4  (same values, exactly 0x400 higher)
+```
+
+Both look like `x`... and are **not**: holding a sustained write (`x = 60` for 2 s, 30
+writes/s to beat the physics) does not move the sprite at all. Their values agree to
+within 1 px and are 1024 bytes apart, which is what two *view* variables (one per player)
+look like — the runner recomputes them from the instance's real position every frame.
+
+Lessons:
+
+* A drift-only filter cannot tell an instance position from a value *derived* from it.
+  Every moving thing (camera, draw record, bbox, xprevious) becomes a candidate.
+* **Poke-and-watch is the only proof.** One write is useless (the next frame overwrites
+  it); the test has to hold the value across several frames and check the sprite moved.
+
+## Next: brute-force proof loop
+
+1. Stimulus: hold `d` 1.5 s, keep slots that changed by 100–400 px (fighter travel).
+2. Oracle: the fighter is the **only bright-yellow blob** on screen; its centroid `x` is
+   trivially extractable from a screenshot.
+3. For each candidate: hold `x = 60` for ~0.5 s, screenshot, measure the yellow centroid.
+   A jump to the left wall proves the slot. Restore, next candidate.
+   ~50 candidates × 1.5 s ≈ 1–2 min per pass, fully automatic.
+4. The confirmed slot also gives the struct layout: `y` and neighbours are then found by
+   reading around it, and the second fighter by scanning for the same offsets elsewhere.
