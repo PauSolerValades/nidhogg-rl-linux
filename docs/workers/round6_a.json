@@ -1,0 +1,20 @@
+{
+ "tag": "a",
+ "goal": "object-type field + instance enumeration",
+ "found": true,
+ "p1_record": "0x191c400",
+ "type_field": {"offset": "0x88", "value": "0x174f900", "width": 4},
+ "instances": [
+  {"addr": "0x191c400", "x": 8, "y": 128, "role": "P1"},
+  {"addr": "0x191bc00", "x": 202, "y": 128, "role": "P2"},
+  {"addr": "0x191c800", "x": 8, "y": 128, "role": "sword"}
+ ],
+ "p2_cross_check_px": [1.41, 1.59, 1.61, 1.59],
+ "refind": "LOCAL READY via enter_match (drivable gate). Park P1 left, alternate d/a 8x (hold 1.0s, settle 0.45s); scan biggest rw heap 0x16a0000..0x8200000 at 0x200 stride, keep record whose f32 x@+0xEC delta equals the yellow sprite x (cropped y<126) within 3px on >=7/8. That yields P1=0x191c400. Read u32@+0x88 from P1 (=0x174f900 this run); scan all 0x200 records for u32@+0x88 == that value -> the two fighter bodies (P1 0x191c400, P2 0x191bc00). x@+0xEC / y@+0xF0 are positions; sword sibling is body+0x400 (P1 0x191c800), arm is body+0x200 (P1 0x191c600).",
+ "dead_ends": [
+  "mutable fields +0x58/+0x64 (sprite/anim state) change between dumps and looked type-like, but are not",
+  "+0x00=0x41267010 and +0x20=0x0b6c5600 are shared by all 36 same-base records (fighters, arms, swords, decor), so not a discriminating type",
+  "+0xb8=0x4a matches the two fighter bodies but also 3 unrelated records at y=560, so it is not clean",
+  "0.5s d/a holds undershoot the walls on this wider READY arena (range ~8..119); endpoints were inconsistent until holds were raised to 1.0s"
+ ]
+}

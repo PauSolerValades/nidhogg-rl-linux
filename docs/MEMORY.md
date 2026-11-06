@@ -202,3 +202,40 @@ Next step is therefore small: read the **object-type field** from `0x191c400` (c
 with the sword at `0x191c800`, the arm at `0x191c600` and a particle record), then find
 instances by type in any room. That is the discriminator that has blocked identification
 since round 1 — and it converts to the full state map (P1, P2, sword) immediately.
+
+## Round 6 — the state interface is complete
+
+Worker A found the discriminator: **`u32 @ +0x88`** on each 0x200 record holds a pointer to
+the object definition. Grouping records by that value yields the two fighter bodies, and
+nothing else matched at similar positions:
+
+```
+type 0x174f900 → 0x191c400  x =   8.0  y = 128      ← matches the yellow sprite (8.7 px)
+                 0x191bc00  x = 202.0  y = 128
+type 0x1731e00 → 0x191d800  x =  24.0  y = 112      (second pair, same layout)
+                 0x191d600  x = 248.0  y = 112
+```
+
+P1's identity was independent of memory: 8 alternating `d`/`a` holds tracked the yellow
+sprite 1:1 with worst error 1.78 px, and P2's record matched the orange centroid within
+1.4–1.6 px in worker A's own cross-check.
+
+```
+record stride 0x200      x @ +0xEC      y @ +0xF0      type @ +0x88
+duplicates               x @ +0xFC      y @ +0x100
+siblings                 sword = body + 0x400     arm = body + 0x200
+```
+
+`nidstate.find_fighters(pid)` implements it: scan the heap at 0x200 stride, group by
+`u32@+0x88`, keep groups of exactly two whose members stand on the same ground line and are
+apart. Two pairs survive on this screen; the tie-break is free — the member whose `x`
+matches the yellow sprite's screen x is P1 (fixed-camera screens only).
+
+### Known limits (be honest with the ML side)
+
+* The type pointer's *value* changes per run, so it must be re-derived (round 6's recipe).
+* Verified on the READY screen, whose positions are **integer screen space**. In a real
+  match positions are fractional room space and the camera follows — the record is the same
+  structure, but P1-vs-P2 labelling there needs the type grouping, not the sprite.
+* `y` was never verified by input (nothing jumps on READY); it is 128 = ground for P1 at the
+  start line, consistent with worker C's attract-mode arcs.

@@ -394,3 +394,51 @@ def moving_fighters(pid, wait=0.45, lo=1.0, hi=120.0):
         if lo <= abs(dx) <= hi:
             out.append((a, before[a], after[a], dx))
     return out
+
+
+# ---------------------------------------------------------------- proven fighter enumeration
+#
+# Round 6 proved the object-type discriminator:
+#   u32 @ +0x88 holds a pointer to the object definition. Two records share it: the two
+#   fighter bodies (P1 and P2). The sword has body+0x400, the arm body+0x200, particles
+#   differ. The pointer value itself changes per run, so it is discovered by grouping.
+TYPE_OFF = 0x88
+
+
+def find_fighters(pid, heap=None):
+    """[(addr, x, y, type_ptr)] for the fighter bodies — type found by grouping, not by ID.
+
+    Verified against the orange sprite's on-screen x within 1.4..1.6 px (fixed camera), and
+    P1's x tracked the yellow sprite 1:1 over 8/8 `d`/`a` transitions.
+    """
+    a, b = heap or biggest_heap(pid)
+    raw = n.memory(pid, a, b - a, "/tmp/ff.bin")
+    if raw is None:
+        return []
+    u32 = np.frombuffer(raw[: len(raw) // 4 * 4], "<u4")
+    idx = np.arange(0, min(len(u32) - TYPE_OFF // 4, len(u32)), REC // 4)
+    types = u32[idx + TYPE_OFF // 4]
+    vals, counts = np.unique(types, return_counts=True)
+    out = []
+    for v, c in zip(vals, counts):
+        if c != 2 or v == 0:
+            continue
+        for j in np.nonzero(types == v)[0]:
+            o = int(idx[j]) * 4
+            x = np.frombuffer(raw[o + X_OFF: o + X_OFF + 4], "<f4")[0]
+            y = np.frombuffer(raw[o + Y_OFF: o + Y_OFF + 4], "<f4")[0]
+            if not (np.isfinite(x) and np.isfinite(y)):
+                continue
+            if not (1.0 <= x <= 1100.0 and 20.0 <= y <= 260.0):
+                continue
+            out.append((a + o, float(x), float(y), int(v)))
+    # two instances of one object type only count as fighters if they stand on the same
+    # ground line and are actually apart -- this kills the hundreds of junk "pairs" that
+    # merely happen to share whatever sits at +0x88 (zero-filled records, decorations).
+    pairs = {}
+    for rec in out:
+        pairs.setdefault(rec[3], []).append(rec)
+    return [r for g in pairs.values()
+            if len(g) == 2 and abs(g[0][2] - g[1][2]) < 25 and abs(g[0][1] - g[1][1]) > 1
+            for r in g]
+    return out
