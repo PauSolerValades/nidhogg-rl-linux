@@ -30,7 +30,7 @@ static void *loop(void *arg) {
                 // add <addr> <delta-hex> <ms>: ACCUMULATE. Physics can rewrite a constant
                 // every tick; it cannot ignore a value that keeps running away.
                 unsigned long a, ms; char hex[64];
-                if (sscanf(line + 4, "%lx %lu %63s", &a, &ms, hex) == 3) {
+                if (sscanf(line + 4, "%lx %63s %lu", &a, hex, &ms) == 3) {   /* addr hex ms */
                     unsigned long nb = strlen(hex) / 2;
                     struct timespec t0, t1;
                     clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -53,7 +53,7 @@ static void *loop(void *arg) {
                 // hold <addr> <bytes-hex> <ms>: pin a value across frames so the
                 // game cannot overwrite it before we observe the effect.
                 unsigned long a, ms; char hex[64];
-                if (sscanf(line + 5, "%lx %lu %63s", &a, &ms, hex) == 3) {
+                if (sscanf(line + 5, "%lx %63s %lu", &a, hex, &ms) == 3) {   /* addr hex ms */
                     unsigned char buf[32];
                     unsigned long nb = strlen(hex) / 2;
                     if (nb > sizeof buf) nb = sizeof buf;
