@@ -26,6 +26,29 @@ static void *loop(void *arg) {
                 FILE *o = fopen(out, "wb");
                 if (o && fwrite((void *)a, 1, l, o) == l) { fclose(o); }
                 else if (o) { fclose(o); unlink(out); }
+            } else if (!strncmp(line, "add ", 4)) {
+                // add <addr> <delta-hex> <ms>: ACCUMULATE. Physics can rewrite a constant
+                // every tick; it cannot ignore a value that keeps running away.
+                unsigned long a, ms; char hex[64];
+                if (sscanf(line + 4, "%lx %lu %63s", &a, &ms, hex) == 3) {
+                    unsigned long nb = strlen(hex) / 2;
+                    struct timespec t0, t1;
+                    clock_gettime(CLOCK_MONOTONIC, &t0);
+                    do {
+                        if (nb == 4) {
+                            float d; unsigned int u = 0;
+                            sscanf(hex, "%8x", &u); memcpy(&d, &u, 4);
+                            *(float *)(void *)a += d;
+                        } else if (nb == 8) {
+                            double d; unsigned long long u = 0;
+                            sscanf(hex, "%16llx", &u); memcpy(&d, &u, 8);
+                            *(double *)(void *)a += d;
+                        }
+                        usleep(500);
+                        clock_gettime(CLOCK_MONOTONIC, &t1);
+                    } while ((unsigned long)((t1.tv_sec - t0.tv_sec) * 1000 +
+                                             (t1.tv_nsec - t0.tv_nsec) / 1000000) < ms);
+                }
             } else if (!strncmp(line, "hold ", 5)) {
                 // hold <addr> <bytes-hex> <ms>: pin a value across frames so the
                 // game cannot overwrite it before we observe the effect.

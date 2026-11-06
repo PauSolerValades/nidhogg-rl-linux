@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 
 spec = importlib.util.spec_from_file_location(
-    "n", Path(__file__).resolve().parent.with_name("nidlinux.py"))
+    "n", Path(__file__).resolve().parent / "nidlinux.py")
 n = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(n)
 
@@ -181,3 +181,88 @@ def coord_pairs(pid, regions_, xmax=1100.0, ymax=260.0):
             for k in np.nonzero(hit)[0][:20000]:
                 pairs.append((a + int(k) * 4, stride * 4))
     return pairs
+
+
+# ---------------------------------------------------------------- menu (verified by the ● marker)
+#
+# The selected menu item is marked by a yellow dot at x~200 while the labels stop at
+# x~185. So the selected row is simply the row whose yellow pixels reach furthest right.
+# Nothing is hardcoded about item order: enumerate_rows() learns it by pressing Down and
+# watching where the dot lands.
+
+def selected_y(i, name="sel"):
+    a = frame(i, name)
+    if a is None:
+        return None
+    r, g, b = (a[:, :, k].astype(int) for k in range(3))
+    m = (r > 190) & (g > 170) & (b < 130)
+    m[:108, :] = False      # the logo's tail reaches x~213 at y<105: never a menu dot
+    m[182:, :] = False
+    m[:, :95] = False
+    m[:, 260:] = False
+    xmax = np.zeros(m.shape[0], dtype=int)
+    for y in range(95, 182):
+        row = np.nonzero(m[y])[0]
+        if len(row):
+            xmax[y] = row.max()
+    ys = np.nonzero((xmax > 197) & (xmax < 218))[0]
+    return int(ys.mean()) if len(ys) else None
+
+
+def enumerate_rows(i, presses=8):
+    """Item y-positions in menu order, learned by pressing Down (the list wraps)."""
+    seen = []
+    y = selected_y(i)
+    if y is None:
+        return seen
+    seen.append(y)
+    for _ in range(presses):
+        n.key(i, "Down")
+        time.sleep(0.7)
+        y = selected_y(i)
+        if y is None:
+            break
+        if y in seen:
+            break
+        seen.append(y)
+    return seen
+
+
+def goto_row(i, rows, index, tries=12):
+    """Press Down until the dot sits on rows[index]."""
+    target = rows[index]
+    for _ in range(tries):
+        y = selected_y(i)
+        if y is None:
+            return False
+        if abs(y - target) <= 2:
+            return True
+        n.key(i, "Down")
+        time.sleep(0.7)
+    return False
+
+
+# ---------------------------------------------------------------- is it a real fight?
+
+def orange_x(i, name="p2"):
+    """P2 is orange (255,160,64); P1 is pure yellow, so they never alias."""
+    a = frame(i, name)
+    r, g, b = (a[:, :, k].astype(int) for k in range(3))
+    m = (r > 200) & (g > 120) & (g < 205) & (b < 110)
+    ys, xs = np.nonzero(m)
+    return float(xs.mean()) if len(xs) > 30 else None
+
+
+def cpu_motion(i, seconds=4.0):
+    """A real TRAINING match has a CPU that plays; the READY screen never moves.
+
+    This is the macOS harness's entry verifier, and it cannot be faked by an animation.
+    """
+    xs = []
+    t0 = time.time()
+    while time.time() - t0 < seconds:
+        x = orange_x(i, f"cpu{len(xs)}")
+        if x is not None:
+            xs.append(x)
+        time.sleep(0.4)
+    return (max(xs) - min(xs)) if len(xs) >= 3 else 0.0

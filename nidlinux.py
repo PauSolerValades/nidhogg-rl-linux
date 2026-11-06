@@ -23,6 +23,8 @@ import sys
 import time
 from pathlib import Path
 
+import struct
+
 import numpy as np
 
 HOME = Path.home()
@@ -259,6 +261,14 @@ def memory(pid, addr, size, path="/tmp/nid_dump.bin"):
 def poke(pid, addr, raw):
     Path(f"/tmp/nid_cmd_{pid}").write_text(f"poke {addr:x} {raw.hex()}\n")
     time.sleep(0.2)
+
+
+def accumulate(pid, addr, delta, width=4, ms=400):
+    """Nudge a value repeatedly: physics overwrites constants, it cannot undo a drift."""
+    fmt = "<f" if width == 4 else "<d"
+    Path(f"/tmp/nid_cmd_{pid}").write_text(
+        f"add {addr:x} {struct.pack(fmt, delta).hex()} {ms}\n")
+    time.sleep(ms / 1000 + 0.05)
 
 
 def ping(pid):
