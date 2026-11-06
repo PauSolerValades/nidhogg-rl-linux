@@ -1,76 +1,66 @@
-# Worker A — find P1's record on the READY screen (fixed camera, 1:1 mapping)
+# Worker A — extract the object-type field and enumerate the fighters
 
 GameMaker YYC game, headless under Proton, no symbol table. Read `docs/MEMORY.md` first.
 
-## The layout is proven; the arena in previous rounds was wrong
+## Where we are
+
+Layout proven (worker C) and **P1's record identified** (round 5):
 
 ```
-record stride 0x200    x @ +0xEC    y @ +0xF0     (float32, fractional, room space)
-duplicates            x @ +0xFC    y @ +0x100
+record stride 0x200    x @ +0xEC    y @ +0xF0 (feet)     dup x @ +0xFC
+round 5 found P1 at 0x191c400 on the READY screen, with 8/8 `d`/`a` transitions
+tracking the yellow sprite 1:1 (worst error 1.78 px, camera fixed).
+siblings: 0x191c800 = sword (same position), 0x191c600 = arm (x offset -8)
 ```
 
-Previous rounds failed because they used the **attract demo**, which changes rooms every
-few seconds — records teleport (`x 944 -> 79` between dumps 0.3 s apart) so nothing stays
-comparable, and pair-matching on geometry alone is chance (a small sprite delta matched 562
-record pairs).
+Addresses change per room and per run, so do not reuse `0x191c400` — re-derive it.
 
-**Use the LOCAL READY screen instead.** It has been measured drivable — yellow screen x
-`22 -> 90 -> 22` under `d` then `a` — and its camera is **fixed** (world shift 0). A fixed
-camera means room `x` equals screen `x` 1:1, so you do not need any camera algebra:
+**Your job is the last missing piece:** find the field that identifies the *object type*, so
+instances can be enumerated in any room without any camera or sprite logic. That unlocks
+P1, P2 and the sword as a state interface.
 
-```
-the fighter record is the one whose x@+0xEC changes by the SAME amount as
-the yellow sprite's screen x, every single time, while you alternate d/a
-```
+## Procedure
 
-## Getting there (and proving it)
-
-`nidstate.enter_match(0)` presses Return six times with held keys and returns only if the
-fighter is drivable (`drivable(0,'d') > 15`). If it returns False, restart
-(`nidstate.restart(0)`) and retry — do not debug the menu, and never use attract mode.
-
-Then prove the two preconditions yourself, before any memory work:
-1. `drivable(0,'d') > 15` and then `drivable(0,'a') > 15` (P1 responds to both).
-2. **Fixed camera**: capture a frame, hold `d` 0.7 s, capture again, and compare a
-   background strip (rows 20..80) — it must NOT shift. If it does shift, you are on the
-   wrong screen and the 1:1 assumption is void: restart.
-
-## Your goal
-
-Identify the one record whose `x@+0xEC` tracks the yellow sprite 1:1, and report it.
-
-Suggested procedure:
-1. Reach and verify READY as above.
-2. Robust sprite x with `nidstate.yellow_screen_x(0)` (pure yellow, play area, densest
-   24-px cluster — the goal flag is a big yellow blob and breaks a plain centroid).
-3. Alternate: hold `d` 0.5 s, sample; hold `a` 0.5 s, sample. Do this 8 times. After each
-   hold, record the sprite x **and** read every candidate record's `x@+0xEC`
-   (`nidstate.fighter_records` gives you the list; cache the addresses for the session
-   since READY does not change rooms).
-4. Match: the fighter's record must satisfy `|Δrecord_x − Δsprite_x| < 3 px` on at least
-   7 of the 8 transitions, with a constant offset (that offset is the camera letterbox).
-   Report the record, the offset, and the per-transition errors.
-5. If it also works vertically, verify `y@+0xF0` with a jump (`space` is the jump key) and
-   report both.
+1. `nidstate.enter_match(0)` → LOCAL READY, gated so it returns True only if P1 is
+   drivable. If False: `nidstate.restart(0)` and retry. Do not debug the menu.
+2. Prove the preconditions yourself: `drivable(0,'d') > 15`, `drivable(0,'a') > 15`, and
+   the background must NOT shift when the sprite moves (fixed camera).
+3. Re-find P1's record: alternate `d`/`a` 8 times (hold 0.5 s), and over **all** 0x200
+   records in the ~109 MB rw heap keep the one whose `x@+0xEC` delta equals the sprite's
+   delta (`nidstate.yellow_screen_x`) within 3 px on ≥7 of 8 transitions. Note: READY
+   positions are **integer screen space**, so do not filter for fractional values.
+4. Dump ±0x120 bytes around P1's record and around the sword/arm siblings. Identify a
+   candidate **type field**: an int or pointer whose value is *equal for the two fighter
+   records* and *different* for the sword, the arm, and a particle record. Look at small
+   ints near the start of the record, and at any 8-byte value that points into the same
+   heap.
+5. Enumerate: scan all 0x200 records for that exact type value. The set should contain
+   P1's record, and its members' `x@+0xEC` must match the visible fighters.
+6. **Cross-check with P2.** The orange sprite `(255,160,64)` is not drivable on READY, but
+   with a fixed camera its centroid x must equal the other fighter record's `x@+0xEC` 1:1
+   (compare `nidstate.orange_x` against each candidate). If the type set contains a record
+   that tracks orange, the type field is right.
+7. Report the recipe: "scan 0x200 records in heap H, keep those with type field T == V;
+   x@+0xEC / y@+0xF0 are positions; sword instance is the sibling at +0x400".
 
 ## Rules
 
-* **No writes.** Do not use `poke`, `hold` or `accumulate` — this task needs none, and the
-  spy's write path has burned three rounds.
-* Only your own farm/worktree/display (env vars are set). `nidstate.restart(0)` if the game
-  dies or the gate fails.
-* Budget: **25 minutes**. One `readyhunt.py` you iterate on; terse output.
-* A negative with numbers is valid. Never report an unproven record.
+* **No writes.** No `poke`/`hold`/`accumulate` — not needed, and that path has burned
+  three rounds.
+* Only your own farm/worktree/display (env vars are set). `nidstate.restart(0)` on trouble.
+* Budget: **25 minutes**. One `typehunt.py` you iterate on; terse output.
+* A negative with numbers is valid. Never report an unproven field.
 
 ## Deliverable
 
 `results/a.json`:
 
 ```json
-{"tag": "a", "goal": "P1 record on READY", "found": false,
- "addr": null, "x_offset": "0xEC", "y_offset": "0xF0", "camera_offset": 0,
- "errors_px": [0, 0, 0, 0, 0, 0, 0, 0], "sprite_x_series": [], "record_x_series": [],
- "refind": "how to pick it again", "dead_ends": ["short notes"]}
+{"tag": "a", "goal": "object-type field + instance enumeration", "found": false,
+ "p1_record": "0x...", "type_field": {"offset": "0x...", "value": "0x...", "width": 4},
+ "instances": [{"addr": "0x...", "x": 0, "y": 0, "role": "P1|P2|sword"}],
+ "p2_cross_check_px": [], "refind": "scan recipe", "dead_ends": ["short notes"]}
 ```
 
-Final message: 5 lines max (record / offset / worst error / vertical check / dead ends).
+Final message: 5 lines max (P1 record / type field / instances found / P2 cross-check error /
+dead ends).
