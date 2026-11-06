@@ -195,3 +195,38 @@ Two things to fix before the hunt is worth re-running:
 Also worth noting: with the game paused, the same harness can find `y` (poke to 40 and
 the sprite should rise), and the P2 instance by repeating the protocol for the orange
 player.
+
+## 2026-11: paused oracle is clean; the candidate generator is the weak link
+
+The paused protocol works and is worth keeping:
+
+* paused screen drift: **0 px** (measured), so any changed pixel is caused by our write;
+* a write that affects nothing is provably not read by the renderer, which instantly
+  eliminates velocities/accumulators (no ticks while paused);
+* three-point probe (`60 / 300 / 60`) with a restore afterwards catches non-reproducible
+  (drifting) values.
+
+What it showed: **every drift candidate repaints the whole 320×200 frame**
+(bbox 319×199), i.e. they are view/surface state — their neighbours are surface
+dimensions (`1018.49, 208.66`), so writing them rescales or re-blits the surface. That is
+also why the earlier "poke moved the sprite" readings were junk: the whole scene moved.
+
+Conclusion: **drift is the wrong candidate generator.** It finds everything *derived* from
+the position (view, camera, surface, draw records) and buries the instance itself.
+
+Options for the next attempt, in order of effort:
+
+1. **Sweep, don't drift.** With the game paused, walk float32 slots whose value looks like
+   a coordinate (0..1000) inside the heap regions, one write each, and keep any that
+   repaints a *sprite-sized* bbox. The paused oracle makes each test unambiguous; the cost
+   is ~1 s per slot, so the candidate set has to be pruned by structure, not motion.
+2. **Use the instance structure.** The heap holds repeated 512-byte records with `(x, y)`
+   pairs. Locate them by shape (two floats in plausible ranges at a fixed offset), then
+   test the x of each with the paused protocol. Structure, not motion, generates candidates.
+3. **Stop looking, start training.** The yellow/orange centroid oracle already gives both
+   fighters' screen positions from a screenshot at ~0 cost, headless, no permissions. That
+   is a usable observation channel today. Memory RE is then only needed for *episode
+   resets*, not for observations.
+4. **Hook the renderer.** In-process code execution is already ours (`LD_PRELOAD`); hooking
+   `DrawIndexed`/`Present` would yield every sprite's screen position exactly. Heaviest,
+   most complete.
