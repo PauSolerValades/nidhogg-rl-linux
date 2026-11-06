@@ -1,0 +1,17 @@
+{
+  "tag": "a",
+  "goal": "identify P1/P2 records",
+  "found": false,
+  "pair": [],
+  "sprite_delta": [],
+  "match_error_px": [],
+  "type_field": {"offset": null, "shared_by_two": false},
+  "refind": "Not reached. The proven layout (stride 0x200, x@+0xEC, y@+0xF0) is correct and readable, but the subtract discriminator could not be closed over time: the attract demo changes rooms every few seconds and the sprite centroid is not a clean oracle when the fighters grapple or a particle burst overlaps them. A controllable/paused single round (or a renderer hook giving exact draw positions) is needed to make the 6-sample camera-cancellation test possible.",
+  "dead_ends": [
+    "Per-sample pair matches are chance: a clean single sample (sprite delta -206.6,+12.2) matched 9 record pairs at e<4, and another (delta -158.5,+0.1) matched 9 pairs; all were static decorations at regular spacings (e.g. y=52 rows stepping x~197px), not fighters.",
+    "6-sample consistency (0.4s apart, thresh 6-12px) returned 0 pairs; 3-sample tight consistency (0.3s, e<12) also 0. The attract demo changes rooms mid-window: records teleport (x 944->79, y 96->199) between consecutive 0.3s dumps, so the same-address assumption breaks.",
+    "One camera-consistent single match (0x46ef600 & 0x4718c00, implied camera offset (63,38), 1:1 scale) was static across 6 samples -> decoration pair, not the fighters.",
+    "Motion scan: while the fighters visibly moved (sprite delta swept +46 to -171), no record passing the exact brief filter (fractional x in (0,960), y in (15,260)) moved smoothly/continuously; the only movers were integer-valued particle/debris records resetting on room change.",
+    "Scale ambiguity not fully closed: the 1:1 room==screen-px assumption held in the one camera-consistent match, but that pair was static so it does not prove the fighter scale; sprite delta of 18px matched 562 record pairs at e<5, so small deltas are not discriminating."
+  ]
+}

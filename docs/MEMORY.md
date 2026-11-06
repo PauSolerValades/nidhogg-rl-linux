@@ -136,3 +136,33 @@ translate cancels out). So: for every pair of records, check
 share an object-type field. ~300 records = 45k pairs, one dump, no input, no menu.
 Confirm with the jump: both fighters arc together, so `y_i - y_j` should track the sprites'
 vertical difference.
+
+## Round 4 — the pair discriminator needs a stable arena; attract mode is not one
+
+Worker A (single worker, no writes, no menu) tested the camera-invariant difference
+`(x_i - x_j) == (sprite_yellow - sprite_orange)` and it does not close:
+
+* **Per-sample matches are chance.** A clean sample matched 9 record pairs at error < 4 px;
+  another matched 9; a small sprite delta (18 px) matched **562** pairs. Static decorations
+  sit at regular spacings (a y=52 row stepping ~197 px), so geometry alone is not selective.
+* **Multi-sample consistency returns 0.** The attract demo **changes rooms every few
+  seconds**: records teleport (`x 944 -> 79`, `y 96 -> 199`) between two dumps 0.3 s apart,
+  so "same address, consistent offset" never holds for 6 samples.
+* The one pair that was camera-consistent over time (implied camera offset (63,38), scale
+  1:1) was *static* — decoration.
+* While the fighters visibly moved, no record passing the filter (fractional x∈(0,960),
+  y∈(15,260)) moved smoothly: the only movers were integer particle/debris records that
+  reset on room change. So either the filter excludes the fighter records or the scale
+  assumption is wrong — both are testable.
+
+## The arena the next attempt should use
+
+Round 3's worker A established something valuable that round 4 did not use:
+
+> the LOCAL READY screen is **drivable** — yellow screen x 22 -> 90 -> 22 under `d` then
+> `a` — and the camera there is **fixed** (world shift 0).
+
+A fixed camera removes the camera algebra entirely: room `x` maps **1:1** to screen `x`,
+so the fighter record is simply the one whose `x` delta equals the sprite's screen-x delta
+while `d`/`a` is held, verified over many samples with no room changes. That is a far
+stronger test than the difference trick, and it needs no writes.
