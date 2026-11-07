@@ -301,6 +301,51 @@ def coord_pairs(pid, regions_, xmax=1100.0, ymax=260.0):
 # Nothing is hardcoded about item order: enumerate_rows() learns it by pressing Down and
 # watching where the dot lands.
 
+def menu_geometry(i, name="geo"):
+    """(box_top, box_bottom, bar_row) for the menu box, or None.
+
+    The selection is the **grey highlight bar**, not the yellow ● dots: every row carries a
+    dot, so a dot-based detector is meaningless (this cost us several rounds of contradictory
+    "the selection moved" observations). The bar is the only row inside the dark box whose
+    pixels are uniformly mid-grey.
+    """
+    a = frame(i, _path(name + ".png") if not str(name).endswith(".png") else name)
+    if a is None:
+        return None
+    lum = a.mean(2)
+    dark = (lum < 30).mean(1)
+    rows = np.nonzero(dark > 0.30)[0]
+    if len(rows) < 6:
+        return None
+    top, bot = int(rows.min()), int(rows.max())
+    box = lum[top:bot + 1]
+    grey = ((box > 55) & (box < 215)).mean(1)
+    cand = np.nonzero(grey > 0.55)[0]
+    if not len(cand):
+        return top, bot, None
+    groups = np.split(cand, np.nonzero(np.diff(cand) > 2)[0] + 1)
+    g = max(groups, key=len)
+    return top, bot, int(top + g.mean())
+
+
+def screen_sig(i, name="sig"):
+    """Compact fingerprint of the menu box: (height, bar_row, coarse pixel code).
+
+    Used to recognise a screen instead of guessing it from timing. Calibrated once, then the
+    navigator can tell "the key did nothing" from "we are somewhere else now".
+    """
+    geo = menu_geometry(i, name)
+    if geo is None:
+        return None
+    top, bot, bar = geo
+    a = frame(i, _path(name + "s.png") if not str(name).endswith(".png") else name)
+    lum = a.mean(2)[top:bot + 1]
+    h, w = lum.shape
+    cells = lum[: (h // 8) * 8, : (w // 8) * 8].reshape(h // 8, 8, w // 8, 8).mean((1, 3))
+    code = tuple(int(c // 32) for c in cells.flatten())
+    return {"top": top, "bottom": bot, "bar": bar, "h": bot - top, "code": code}
+
+
 def selected_y(i, name="sel"):
     a = frame(i, name)
     if a is None:

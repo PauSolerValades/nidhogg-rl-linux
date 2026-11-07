@@ -64,7 +64,45 @@ def start(n):
     start_ids(list(range(n)))
 
 
-def start_ids(ids):
+def _env_of(pid):
+    try:
+        return Path(f"/proc/{pid}/environ").read_bytes().decode("latin1")
+    except OSError:
+        return ""
+
+
+def clean_farm(fresh=False):
+    """Kill only THIS farm's wine processes and clear stale locks.
+
+    Six accumulated `wineserver` processes made every new launch sit at a black window for
+    300 s with no error in the log. Matching on the farm path in /proc/<pid>/environ means
+    other farms (other workers, other experiments) are never touched.
+    """
+    farm = str(FARM)
+    killed = 0
+    for name in ("wineserver", "wineserver64", "services.exe", "plugplay.exe"):
+        for pid in subprocess.run(["pgrep", "-x", name], capture_output=True,
+                                  text=True).stdout.split():
+            if farm in _env_of(pid):
+                try:
+                    os.kill(int(pid), signal.SIGKILL)
+                    killed += 1
+                except (ProcessLookupError, PermissionError, ValueError):
+                    pass
+    for i in list(_pids()):
+        stop_id(i)
+    for lock in FARM.glob("inst/*/pfx.lock"):
+        lock.unlink(missing_ok=True)
+    if fresh:
+        for d in FARM.glob("inst/*"):
+            subprocess.run(["rm", "-rf", str(d)])
+    if killed:
+        print(f"[clean] killed {killed} stale wine process(es) for {FARM.name}")
+    return killed
+
+
+def start_ids(ids, fresh=False):
+    clean_farm(fresh=fresh)
     procs = _pids()
     for i in ids:
         disp = f":{DISPLAY_BASE + i}"
