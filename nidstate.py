@@ -699,12 +699,18 @@ def pad_and_fighter(i, which, name="pad"):
         return None
     m = _mask(a, which)
     h, w = m.shape
+    # A pad is a wide colour run, but a fighter STANDING on it splits the run in two, so
+    # measure the whole row (spread + total pixels) instead of the longest single run.
     pad_y, pad_run = None, None
     for y in range(int(h * 0.55), h):
-        rn = _longest_run(m[y])
-        if rn and rn[1] - rn[0] > 25:
-            if pad_run is None or rn[1] - rn[0] > pad_run[1] - pad_run[0]:
-                pad_y, pad_run = y, rn
+        xs_row = np.nonzero(m[y])[0]
+        if len(xs_row) < 25:
+            continue
+        spread = xs_row.max() - xs_row.min()
+        if spread < 25:
+            continue
+        if pad_run is None or spread > pad_run[1] - pad_run[0]:
+            pad_y, pad_run = y, [int(xs_row.min()), int(xs_row.max())]
     if pad_run is None:
         return None
     body = m.copy()
