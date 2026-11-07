@@ -302,30 +302,65 @@ def coord_pairs(pid, regions_, xmax=1100.0, ymax=260.0):
 # watching where the dot lands.
 
 def menu_geometry(i, name="geo"):
-    """(box_top, box_bottom, bar_row) for the menu box, or None.
+    """(box_top, box_bottom, bar_row) for a menu box, or None.
 
     The selection is the **grey highlight bar**, not the yellow ● dots: every row carries a
-    dot, so a dot-based detector is meaningless (this cost us several rounds of contradictory
-    "the selection moved" observations). The bar is the only row inside the dark box whose
-    pixels are uniformly mid-grey.
+    dot, so a dot-based detector is meaningless (this cost several rounds of contradictory
+    "the selection moved" observations).
+
+    Sanity checks matter: the title screen also has large dark areas, so a box must look like
+    a box (30..90 px tall, mostly dark, bar strictly inside it) or we report None.
     """
-    a = frame(i, _path(name + ".png") if not str(name).endswith(".png") else name)
+    a = frame(i, name if str(name).endswith(".png") else _path(name + ".png"))
     if a is None:
         return None
     lum = a.mean(2)
     dark = (lum < 30).mean(1)
-    rows = np.nonzero(dark > 0.30)[0]
-    if len(rows) < 6:
+    rows = np.nonzero(dark > 0.55)[0]          # a menu box is dense dark, not a sky gradient
+    if len(rows) < 15:
         return None
-    top, bot = int(rows.min()), int(rows.max())
+    groups = np.split(rows, np.nonzero(np.diff(rows) > 3)[0] + 1)
+    groups = [g for g in groups if len(g) >= 15]
+    if not groups:
+        return None
+    g = max(groups, key=len)
+    top, bot = int(g.min()), int(g.max())
+    if not (30 <= bot - top <= 90):
+        return None
     box = lum[top:bot + 1]
     grey = ((box > 55) & (box < 215)).mean(1)
     cand = np.nonzero(grey > 0.55)[0]
     if not len(cand):
         return top, bot, None
-    groups = np.split(cand, np.nonzero(np.diff(cand) > 2)[0] + 1)
-    g = max(groups, key=len)
-    return top, bot, int(top + g.mean())
+    cg = np.split(cand, np.nonzero(np.diff(cand) > 2)[0] + 1)
+    bar = max(cg, key=len)
+    if not (3 <= len(bar) <= 20):
+        return top, bot, None
+    return top, bot, int(top + bar.mean())
+
+
+def ensure_menu(i, tries=6, wait=0.6):
+    """Get a menu on screen and keep it: the menu times out back to the title on idle.
+
+    Returns the geometry, or None. Deliberately fast: every second spent measuring is a second
+    of the timeout budget spent.
+    """
+    for _ in range(tries):
+        geo = menu_geometry(i, f"em{_}")
+        if geo and geo[2] is not None:
+            return geo
+        n.key(i, "Return", hold=0.12)
+        time.sleep(wait)
+    return menu_geometry(i, "em_last")
+
+
+def menu_step(i, keysym, wait=0.45):
+    """Press one menu key and report the bar before/after (bar None = cell/screen, not a row)."""
+    before = menu_geometry(i, "ms_a")
+    n.key(i, keysym, hold=0.12)
+    time.sleep(wait)
+    after = menu_geometry(i, "ms_b")
+    return before, after
 
 
 def screen_sig(i, name="sig"):

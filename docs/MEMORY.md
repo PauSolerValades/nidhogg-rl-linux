@@ -334,3 +334,29 @@ instance is re-copied from the template. This belongs in `start_ids()`.
 Otherwise the user's menu state machine checks out on the first try: one `Return` (120 ms) from
 the title lands in the menu, whose items are NEWS / SINGLE PLAYER / MULTIPLAYER / OPTIONS / EXIT /
 EXTRAS / QUIT TO DESKTOP — the user's list plus EXIT.
+
+## Multi-instance boot works; the READY screen is reachable and drivable
+
+`scripts/menutest.py 3` on the server (farm `~/.nidfarm-test`, displays :41–:43):
+
+```
+instance 0: window after 60 s          instance 1: window 0 s     instance 2: window 5 s
+menu bar rows: 144 (inst 1), 145 (inst 2)     (instance 0 pressed Return during the splash)
+fps: 59.7 / 60.0 / 59.7
+```
+
+So three instances run in parallel at full frame rate, and `menu_geometry()` reads the
+highlight bar correctly. The old dot-based `selected_y()` is retired — every row has a dot.
+
+**Navigation that actually happened** (instance 1): from the title, `Down, Down, Return` landed
+in `MULTIPLAYER → LOCAL → READY`. That is user state (10): two fighters on their pads waiting.
+
+**Input bindings measured on the READY screen:**
+
+* P1 (yellow): `a`/`d` move; `w` jumps; `space` was the jump key in the training match.
+* P2 (orange): **arrow keys** (`Right` moved it 38.8 px; `i/j/k/l` do nothing).
+
+**Not yet done:** completing READY → stage select (11). The fighters walked past their pads to the
+walls; standing on the pad requires closed-loop positioning (pads are wide coloured bars near the
+ground row, and overshooting is easy at 60 fps). Also unconfirmed whether stepping up needs a jump
+press or merely standing on the pad — that is a question for the human player, not for pixels.
