@@ -183,3 +183,28 @@ docs/SESSION_LOG.md  docs/SESSION_LOG.jsonl.gz   (this conversation, for context
 `docs/SESSION_LOG.jsonl.gz` is the full transcript; `docs/SESSION_LOG.md` is the readable,
 tool-output-truncated version. Drop the `.gz` from the repo if size matters — it is context,
 not code.
+
+## 9. Server readiness (measured on artemis, 384 cores / 1.1 TB / 9.8 TB free)
+
+"Move to the server" is approved and the reasoning in §0 still holds — but the box is not ready
+yet. Measured gaps:
+
+| need | status |
+|---|---|
+| `Xvfb`, `xdotool`, ImageMagick | **missing** (`apt install xvfb xdotool imagemagick`) |
+| Vulkan ICD | `lvp_icd` (lavapipe, software) present — fine, no GPU needed at 320×200 |
+| `ffmpeg`, `gcc`, `python3`, `numpy 2.4` | present |
+| Steam client / game files | **missing** — no `~/.local/share/Steam`, no game copy |
+| farm (`~/.nidfarm`) | missing — created by `./farm.sh init` once the game exists |
+
+Phase 0 therefore starts with: packages → game data (Steam offline **or** a Goldberg-style stub,
+which is the sane choice for 10+ instances) → `farm.sh init` → `nidstate.find_fighters()` on
+READY matching the sprites → `control_gate` G1/G2 from `docs/CONTROL_GATE.md`.
+
+Then Phase 1 is *re-done*, not re-read: the current gate is `scope: fixed-camera` only, so it
+must be extended with G1 (causality) and G2 (write survival, now that P1's address is proven
+rather than guessed) before it can certify a *match*.
+
+And the first thing worth spending 384 cores on is **gate-filtered parallel entry**: K
+instances × entry attempts, keep the ones where G1 ∧ G2 ∧ `cpu_motion > 15`. Phases 2–5 all run
+on the survivors, so a bad entry costs one slot instead of one session.

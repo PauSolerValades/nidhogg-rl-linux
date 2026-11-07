@@ -11,3 +11,5 @@ game/
 legacy/work_small/*.app
 *.app/
 *.ios
+
+game/
