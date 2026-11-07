@@ -41,9 +41,10 @@ type 0x174f900 → 0x191c400  x=8.0   y=128   P1 (yellow sprite 8.7 px)
 
 | item | requirement | status |
 |---|---|---|
-| control gate | a write must survive into the simulation (`add` +200 survives ≈200 and the sprite moves) | **not implemented** |
+| control gate | **read-only**: input direction control (A) + record tracks sprite 1:1 (B) + no other record does (C) | **proven** — `nidstate.control_gate`; attracts fail A (0.0 px), READY passes 12/12 with median 0.87 px error; evidence in `docs/gate/` |
 | action→observation latency | ticks from held key to visible state | unknown |
 | reset semantics | writing `x`/`y`: does physics snap back? | unknown |
 | address stability | stable within a room; re-bind by type after a room change | inferred |
+| writes | `poke`/`hold`/`add` work on some fields but have **killed the game twice**; not used by any gate | unsafe |
 | death reallocation | do records move/allocate on death? | unknown |
 | determinism | identical inputs from one reset → identical trajectory? | unknown |

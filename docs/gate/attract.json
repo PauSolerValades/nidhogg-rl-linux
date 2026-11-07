@@ -1,0 +1,11 @@
+{
+ "state": "attract",
+ "ok": false,
+ "gate": {
+  "A_drivable": 0.0,
+  "P1": null,
+  "errors_px": [],
+  "runners_up": [],
+  "C_second_best_error": null
+ }
+}

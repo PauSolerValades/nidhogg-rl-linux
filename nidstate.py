@@ -102,6 +102,8 @@ def yellow_screen_x(i, name="yx", y0=40, y1=165):
     the fighter is small, so the centroid lands between them.
     """
     a = frame(i, name)
+    if a is None:
+        return None
     r, g, b = (a[:, :, k].astype(int) for k in range(3))
     m = (r > 240) & (g > 240) & (b < 80)
     m[:y0, :] = False
@@ -117,21 +119,31 @@ def yellow_screen_x(i, name="yx", y0=40, y1=165):
     return float(sel.mean()) if len(sel) else None
 
 
-def drivable(i, key="d", hold=0.7, min_px=20.0):
-    """Positive gate: does holding a direction actually move P1 on screen?
-
-    Attract mode and the READY screen both show fighters and both pass
-    `sprite_present`/`cpu_motion`, so neither proves control. This does.
-    """
+def _sign_of_delta(i, key, hold=0.45):
     x0 = yellow_screen_x(i, "dr0")
     if x0 is None:
         return 0.0
     n.key(i, key, hold=hold)
-    time.sleep(0.3)
+    time.sleep(0.25)
     x1 = yellow_screen_x(i, "dr1")
-    if x1 is None:
-        return 0.0
-    return abs(x1 - x0)
+    return 0.0 if x1 is None else x1 - x0
+
+
+def drivable(i, hold=0.45, min_px=8.0):
+    """Does our input actually move P1? Requires the delta to *reverse* with the key.
+
+    A plain magnitude is not enough: the attract demo's own AI moves the fighter ~10-12 px
+    per 0.7 s, which passes any magnitude threshold. Our keys, by contrast, must produce
+    opposite-sign deltas for `d` and `a`, twice in a row. Chance of that happening on its own
+    is ~6%.
+    """
+    n.key(i, "a", hold=1.4)                      # park against the left wall first
+    time.sleep(0.3)
+    deltas = [_sign_of_delta(i, "d", hold), _sign_of_delta(i, "a", hold),
+              _sign_of_delta(i, "d", hold), _sign_of_delta(i, "a", hold)]
+    ok = (deltas[0] > min_px and deltas[1] < -min_px
+          and deltas[2] > min_px and deltas[3] < -min_px)
+    return max(deltas) - min(deltas) if ok else 0.0
 
 
 def enter_match(i, tries=4):
@@ -149,6 +161,8 @@ def enter_match(i, tries=4):
 def sprite_present(i):
     """P1 is the only pure-yellow thing on screen (P2 is orange, goal line dim)."""
     a = frame(i, "present")
+    if a is None:
+        return False
     r, g, b = (a[:, :, k].astype(int) for k in range(3))
     return int(((r > 240) & (g > 240) & (b < 80)).sum()) >= 20
 
@@ -194,6 +208,8 @@ def effect(base, after, box=PAUSE_BOX):
 def sprite_bbox(i):
     """Bounding box of P1 while paused (dimmed to ~(123,92,0))."""
     a = frame(i, "spr")
+    if a is None:
+        return None
     r, g, b = (a[:, :, k].astype(int) for k in range(3))
     m = (r > 100) & (r < 160) & (g > 70) & (g < 115) & (b < 25)
     x0, y0, x1, y1 = PAUSE_BOX
@@ -219,6 +235,15 @@ def pin(i, pid, addr, value, width=4, ms=400):
 def read_f(pid, addr, width=4):
     raw = n.memory(pid, addr, width, str(ART / "read.bin"), )
     return struct.unpack("<f" if width == 4 else "<d", raw)[0] if raw else None
+
+
+def read_x(pid, rec_addr):
+    """P1/P2 x for a record base returned by find_fighters (field at +0xEC, not the base)."""
+    return read_f(pid, rec_addr + X_OFF)
+
+
+def read_y(pid, rec_addr):
+    return read_f(pid, rec_addr + Y_OFF)
 
 
 def regions(pid, min_size=1 << 20, max_size=200 << 20):
@@ -327,6 +352,8 @@ def goto_row(i, rows, index, tries=12):
 def orange_x(i, name="p2"):
     """P2 is orange (255,160,64); P1 is pure yellow, so they never alias."""
     a = frame(i, name)
+    if a is None:
+        return None
     r, g, b = (a[:, :, k].astype(int) for k in range(3))
     m = (r > 200) & (g > 120) & (g < 205) & (b < 110)
     ys, xs = np.nonzero(m)
@@ -442,3 +469,99 @@ def find_fighters(pid, heap=None):
             if len(g) == 2 and abs(g[0][2] - g[1][2]) < 25 and abs(g[0][1] - g[1][1]) > 1
             for r in g]
     return out
+
+
+# ---------------------------------------------------------------- CONTROL GATE
+#
+# Falsifiable and READ-ONLY. Writing to a fighter's x at 2 kHz killed the game twice, so the
+# gate cannot depend on writes. Three independent, non-destructive checks:
+#
+#   A control   holding d/a moves the sprite in the key's direction, twice in a row
+#               (attract mode's AI also moves fighters -> magnitude alone proves nothing)
+#   B identify  among the candidate records, one tracks the sprite's screen x 1:1 on every
+#               transition. Selecting by *tracking* (not by a coincidental value match) is
+#               what makes this sound: a static prop can sit at the same x and never move.
+#   C negative  no second record tracks the yellow sprite equally well
+#
+# Writes (poke/hold/add) remain a separate capability with their own risk profile.
+
+def identify_p1(i, pid, cycles=6, hold=0.45, settle=0.25, verbose=True):
+    """Find the record whose x delta matches the sprite's, sampling BOTH in the same pass.
+
+    Sampling the sprite and the records in separate passes misaligns them in time (one
+    transition read 4.7 px of error purely from that). Here every sample reads the sprite
+    and all candidate records back to back, so the comparison is like-for-like.
+    """
+    cands = [r[0] for r in find_fighters(pid)]
+    if not cands:
+        return None, [], [], []
+    n.key(i, "a", hold=1.3)                      # park: room to move right
+    time.sleep(0.3)
+    sprite = [yellow_screen_x(i, "ip0")]
+    recs = {c: [read_x(pid, c)] for c in cands}
+    for k in range(cycles * 2):
+        n.key(i, "d" if k % 2 == 0 else "a", hold=hold)
+        time.sleep(settle)
+        sprite.append(yellow_screen_x(i, f"ip{k+1}"))
+        for c in cands:
+            recs[c].append(read_x(pid, c))
+    if any(v is None for v in sprite):
+        return None, [], sprite, cands
+    sdx = [b - a for a, b in zip(sprite, sprite[1:])]
+    scored = []
+    for c in cands:
+        r = recs[c]
+        if any(v is None for v in r):
+            continue
+        rdx = [b - a for a, b in zip(r, r[1:])]
+        errs = [abs(a - b) for a, b in zip(sdx, rdx)]
+        scored.append((max(errs), c, errs))
+    scored.sort()
+    if verbose:
+        for score, c, errs in scored:
+            print(f"    candidate {c:#x}: max err {score:6.2f} px, "
+                  f"median {sorted(errs)[len(errs)//2]:5.2f}")
+    if not scored:
+        return None, [], sprite, cands
+    best = scored[0]
+    others = [o for o in scored[1:]]
+    return best[1], best[2], sprite, others
+
+
+def control_gate(i, verbose=True):
+    """Returns (ok, evidence). Read-only: safe to run constantly, including from workers."""
+    pid = pid_of(i)
+    ev = {"A_drivable": 0.0, "P1": None, "errors_px": [], "runners_up": [],
+          "C_second_best_error": None}
+    if not pid:
+        return False, ev
+
+    ev["A_drivable"] = drivable(i)
+    if verbose:
+        print(f"  A control: {ev['A_drivable']:.1f} px of direction-controlled travel "
+              f"(need >15)")
+
+    addr, errs, xs, others = identify_p1(i, pid, verbose=verbose)
+    if addr is None:
+        if verbose:
+            print("  B identify: no record tracks the sprite")
+        return False, ev
+    med = sorted(errs)[len(errs) // 2] if errs else 99.0
+    ev["P1"] = {"addr": f"{addr:#x}", "x": read_x(pid, addr)}
+    ev["errors_px"] = [round(e, 2) for e in errs]
+    ev["error_median"] = round(med, 2)
+    b_ok = len(errs) >= 8 and med < 2.0 and max(errs) < 4.0
+    if verbose:
+        print(f"  B identify: {addr:#x} tracks the sprite "
+              f"(median {ev['error_median']} px, max {max(errs):.2f} px; need median <2, max <4)")
+
+    # C: no other record may track the sprite this well (same pass — free)
+    if others:
+        ev["runners_up"] = [(f"{a:#x}", round(float(m), 2)) for m, a, _e in others]
+        ev["C_second_best_error"] = round(float(others[0][0]), 2)
+    c_ok = ev["C_second_best_error"] is not None and ev["C_second_best_error"] > 4.0
+    if verbose:
+        print(f"  C negative: next-best record error {ev['C_second_best_error']} "
+              f"({'ok' if c_ok else 'PROBLEM'})")
+
+    return ev["A_drivable"] > 15 and b_ok and c_ok, ev

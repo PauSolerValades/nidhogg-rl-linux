@@ -124,8 +124,10 @@ Rules that made the last rounds productive:
 **Phase 0 — port and verify (½ day).** Farm up on the server; `find_fighters()` returns P1/P2
 whose `x` matches the sprites on READY; `dump` bandwidth sanity-checked. No new science.
 
-**Phase 1 — the gate (§1).** Write `control_gate(i)`; must fail on attract, pass on a drivable
-match. *Acceptance:* the test itself is committed and demonstrably distinguishes the two states.
+**Phase 1 — the gate (§1). DONE.** `nidstate.control_gate(i)` is read-only and has been run in
+both directions: attract fails (0.0 px of direction control), READY passes (12/12 transitions,
+median 0.87 px, next-best record 51 px). Evidence in `docs/gate/`. Note: a write-based gate was
+abandoned after it killed the game twice.
 
 **Phase 2 — player state machine.** Full key sweep against the animation field. *Acceptance:*
 a table `key → animation values` that names attack, crouch, roll, throw, jump, dive; rows 4/5/7/9

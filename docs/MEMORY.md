@@ -242,3 +242,44 @@ matches the yellow sprite's screen x is P1 (fixed-camera screens only).
   structure, but P1-vs-P2 labelling there needs the type grouping, not the sprite.
 * `y` was never verified by input (nothing jumps on READY); it is 128 = ground for P1 at the
   start line, consistent with worker C's attract-mode arcs.
+
+## Round 7 — the control gate exists and both controls behave
+
+`nidstate.control_gate(i)` — **read-only**, three independent checks, and it has been run in
+both directions:
+
+| check | attract (must fail) | READY (must pass) |
+|---|---|---|
+| **A control**: holding `d`/`a` moves the sprite in the key's direction, twice in a row | **0.0 px** → fail | **100.8 px** → pass |
+| **B identify**: the record's `x` delta equals the sprite's on every transition, sampled in the *same pass* | no record tracks | `0x1918a00`, 12/12 transitions, errors 0.44–1.98 px, **median 0.87** |
+| **C negative**: no other record tracks it that well | — | next best **51.18 px** |
+
+Evidence files: `docs/gate/attract.json`, `docs/gate/ready.json`.
+
+### Writes are deliberately *not* part of the gate
+
+Two attempts to include a write-based check (accumulate +40 px on P1's `x` at 2 kHz) **killed
+the game** — once for worker A in round 3, once here. Writes remain a separate capability with
+their own risk profile; no automation should depend on them until the crash is understood.
+
+### Four bugs this exercise surfaced (all mine, all fixed)
+
+1. `drivable()` used a magnitude threshold — but the attract demo's own AI moves the fighter
+   10–12 px per 0.7 s, which *passes* any magnitude test. Now it requires the delta to
+   **reverse sign with the key**, twice. Chance of a false pass: ~6%.
+2. `find_fighters()` returns the **record base**, and the gate was reading `x` at the base
+   instead of `base + 0xEC` — so it kept measuring the constant `10.4024` and reported zero
+   drift. Helper `read_x()` now exists for exactly this.
+3. The sprite series and the record series were sampled in **two separate passes**, so they
+   were misaligned in time (~4.7 px of pure error). Now one pass reads sprite + all candidates
+   back to back.
+4. `identify_p1(..., verbose)` passed positionally into `cycles`, silently running 2
+   transitions instead of 12.
+
+### What the gate means for the project
+
+It is now possible to assert, mechanically, *"this game state is under our control and the
+memory we read is the object that is drawn"* — with a negative control that fails on the
+attract demo. That assertion is the precondition for every remaining contract row (sword,
+death, rounds, animation states), and it is what makes parallel workers safe: they can refuse
+to work in a bad state instead of spending 25 minutes measuring noise.
