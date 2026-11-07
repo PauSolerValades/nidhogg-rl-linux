@@ -26,7 +26,8 @@ spawn() {  # $1=tag $2=display_base $3=farm
   ( cd "$wt" && \
     NIDFARM="$farm" NID_DISPLAY_BASE="$disp" NIDTAG="$tag" \
     NIDART="/tmp/nidart-$tag" \
-    timeout "$BUDGET" pi --print --no-session --tools bash,read,write,edit \
+    timeout "$BUDGET" pi --print --no-session --model "${NID_MODEL:-deepseek-flash}" \
+      --tools bash,read,write,edit \
       "$(cat "$REPO/briefs/$tag.md")" \
       > "$REPO/logs/worker_$tag.log" 2>&1 ; \
     echo "[worker $tag] exit $?" >> "$REPO/logs/worker_$tag.log" ) &

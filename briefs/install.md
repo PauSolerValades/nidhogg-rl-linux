@@ -25,6 +25,21 @@ user's home, **XDG-compliant** (`$XDG_DATA_HOME`, `$XDG_CACHE_HOME`, `$XDG_CONFI
 4. You leave behind a **repeatable script** `results/install.sh` that reproduces your install
    from scratch, and `results/install.json` with versions, paths and commands.
 
+## Already done for you (do not redo)
+
+`scripts/server-runtime.sh` installs a **user-level Xvfb + xdotool** (packages extracted with
+`dpkg-deb -x` into `~/.local/opt/nidroot`, plus a one-byte-string patch so the X server finds
+`xkbcomp` in `/tmp/xkb` instead of the unwritable `/usr/bin`). It is verified working:
+
+```bash
+./scripts/server-runtime.sh          # idempotent
+. ~/.local/opt/nidroot/env.sh        # PATH + LD_LIBRARY_PATH
+Xvfb :40 -screen 0 640x480x24 &      # works; DISPLAY=:40 xdotool getdisplaygeometry -> 640 480
+```
+
+Start from that, not from scratch. Your job is the part it does not cover: **Proton + the
+Steam stub + getting `game/Nidhogg.exe` to a visible window.**
+
 ## What you will need (suggested, not exhaustive)
 
 * **Virtual display:** `Xvfb` and its libs. No root → `apt-get download <pkg>` then
