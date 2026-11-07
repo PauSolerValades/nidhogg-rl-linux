@@ -1,3 +1,6 @@
+> Structured view (objective, method, capabilities, limits): **docs/OVERVIEW.md**
+> This file is the chronological lab notebook.
+
 # Process memory: what is proven, what is not
 
 ## Proven
