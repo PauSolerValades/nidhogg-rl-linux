@@ -312,3 +312,25 @@ GPU-less box (lavapipe *is* installed and valid; the stalls were shader compilat
 missing device). `xdotool` needs the runtime env (`PATH` + `libxdo.so.3`) or it exits silently.
 `data.win` at 320×200 makes the window cheap; the game renders at 640×480 screen with a
 320×200 window.
+
+## Server session — three corrections, one of them embarrassing
+
+**1. "1 fps" was a measurement artifact.** Counting frame changes by calling `frame()` in a loop
+measures the *capture* rate: one screenshot round-trip is ~0.9 s under load. Using a single
+streamed `x11grab` capture and diffing consecutive frames: **59.9 fps at the title, 57.2 fps in a
+live training match** (34.5 fps when the box is busy with other tenants). `nidlinux.fps()` now
+does it correctly. Lesson: never measure frame rate one screenshot at a time.
+
+**2. The menu's yellow ● dots are decoration, not the selection.** Every row has one. The actual
+selection is the **grey highlight bar** across the row. Our `selected_y()` has been reading the
+dots since the laptop, which is why "Up/Down moved the selection" observations kept contradicting
+each other and why navigation was never reliable. The navigator must detect the bar row.
+
+**3. Stale `wineserver` processes wedge new launches.** Six had accumulated from killed runs; a
+new instance then never creates a window (300 s timeout, no error in the log). Clean boot recipe:
+kill wineservers whose `/proc/<pid>/environ` mentions *our* farm, delete `inst/<i>`, relaunch — the
+instance is re-copied from the template. This belongs in `start_ids()`.
+
+Otherwise the user's menu state machine checks out on the first try: one `Return` (120 ms) from
+the title lands in the menu, whose items are NEWS / SINGLE PLAYER / MULTIPLAYER / OPTIONS / EXIT /
+EXTRAS / QUIT TO DESKTOP — the user's list plus EXIT.

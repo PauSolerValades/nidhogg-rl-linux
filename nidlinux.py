@@ -252,6 +252,27 @@ def frame(i, path="/tmp/nid_f.png"):
     return np.frombuffer(raw, np.uint8).reshape(int(h), int(w), 3)
 
 
+def fps(i, secs=6.0, rate=120):
+    """Frames per second that actually change on screen.
+
+    Do NOT measure this by calling frame() in a loop: one screenshot round trip costs
+    ~0.9 s, so a per-shot loop reports 1.0 fps no matter how fast the game runs (measured:
+    12 shots in 11.2 s while the same window was changing 60x/s). Capture one stream
+    instead and diff consecutive frames.
+    """
+    geo = _geometry(i) or (0, 0, 320, 200)
+    x, y, w, h = geo
+    disp = _pids()[str(i)]["display"]
+    raw = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "x11grab",
+                          "-video_size", f"{w}x{h}", "-framerate", str(rate),
+                          "-i", f"{disp}+{x},{y}", "-t", str(secs),
+                          "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                         capture_output=True, check=True).stdout
+    f = np.frombuffer(raw, np.uint8).reshape(-1, h, w)
+    changed = int((np.abs(np.diff(f.astype(np.int16), axis=0)).max((1, 2)) > 4).sum())
+    return changed / secs
+
+
 def stable_change(base, after):
     """Pixels that changed AND were static in the baseline (immune to animated art).
 
@@ -371,6 +392,8 @@ if __name__ == "__main__":
             time.sleep(5)
         else:
             print(f"no window after {limit:.0f}s")
+    elif cmd == "fps":
+        print(f"{fps(int(sys.argv[2])):.1f}")
     elif cmd == "ping":
         print(ping(_game_pid(int(sys.argv[2]))))
     else:
