@@ -170,12 +170,18 @@ def sprite_present(i):
 # ---------------------------------------------------------------- eyes
 
 
+def _path(name):
+    """Don't double-suffix: '/tmp/x.png' stays as given, 'shot' becomes '<ART>/shot.png'."""
+    p = str(ART / name) if not str(name).startswith("/") else str(name)
+    return p if p.lower().endswith(".png") else p + ".png"
+
+
 def grab(i, name):
-    return n.grab(i, str(ART / f"{name}.png"))
+    return n.grab(i, _path(name))
 
 
 def frame(i, name="f"):
-    return n.frame(i, str(ART / f"{name}.png"))
+    return n.frame(i, _path(name))
 
 
 def frozen_noise(i):
