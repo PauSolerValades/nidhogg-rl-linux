@@ -93,3 +93,13 @@ Steam stub + getting `game/Nidhogg.exe` to a visible window.**
 
 Final message: 10 lines max — what works, the env vars to export, the one command to launch,
 and what still does not work.
+
+## Never kill by pattern (this killed an earlier worker)
+
+Your brief is passed on stdin, but **an agent's own process carries the whole brief in its
+command line** when it is passed as an argument — and even now, `pkill -f <word>` can match
+your own shell. So:
+
+* use `pkill -x <exact-process-name>` (e.g. `pkill -x Xvfb`, `pkill -x Nidhogg.exe`) — never
+  `pkill -f`;
+* if you must match a pattern, exclude yourself: `pgrep -f 'Xvf[b] :41'` (the bracket trick).

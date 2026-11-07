@@ -73,3 +73,13 @@ python3 -c "import nidstate as s; s.grab(0,'/tmp/proof.png'); print(s.frame(0).m
 `results/launch.json`: `{"ok": bool, "env": {...extra vars...}, "cmd": "...", "window": "0x…",
 "luma": 0.0, "survived_s": 0, "root_cause": "…", "workaround": "…", "blockers": []}`
 plus `results/launch.sh` that reproduces it. Final message: 6 lines max.
+
+## Never kill by pattern (this killed an earlier worker)
+
+Your brief is passed on stdin, but **an agent's own process carries the whole brief in its
+command line** when it is passed as an argument — and even now, `pkill -f <word>` can match
+your own shell. So:
+
+* use `pkill -x <exact-process-name>` (e.g. `pkill -x Xvfb`, `pkill -x Nidhogg.exe`) — never
+  `pkill -f`;
+* if you must match a pattern, exclude yourself: `pgrep -f 'Xvf[b] :41'` (the bracket trick).
