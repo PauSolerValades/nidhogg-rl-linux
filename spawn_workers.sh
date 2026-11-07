@@ -35,13 +35,15 @@ spawn() {  # $1=tag $2=display_base $3=farm
 
 TAGS="${*:-a b c}"
 pkill -x 'Nidhogg.exe' 2>/dev/null; sleep 2
+# Any tag a..z: farm, display band and worktree are derived from the tag, so workers can be
+# added without editing this file. Display bands are 10 apart (a=:10 b=:20 ... z=:260).
 for t in $TAGS; do
-  case "$t" in
-    a) spawn a 10 "$HOME/.nidfarm" ;;
-    b) spawn b 20 "$HOME/.nidfarm-b" ;;
-    c) spawn c 30 "$HOME/.nidfarm-c" ;;
-    *) echo "[spawn] unknown tag $t" ;;
-  esac
+  idx=$(printf '%d' "'$t"); idx=$((idx - 97))          # a=0, b=1, ...
+  [ "$idx" -ge 0 ] && [ "$idx" -le 25 ] || { echo "[spawn] bad tag $t"; continue; }
+  disp=$((10 + idx * 10))
+  farm="$HOME/.nidfarm-$t"
+  [ "$t" = a ] && farm="$HOME/.nidfarm"
+  spawn "$t" "$disp" "$farm"
 done
 echo "[spawn] both launched; logs in $REPO/logs/worker_{a,b}.log"
 wait
