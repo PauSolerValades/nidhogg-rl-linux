@@ -360,6 +360,17 @@ if __name__ == "__main__":
         print(grab(int(sys.argv[2]), sys.argv[3] if len(sys.argv) > 3 else "/tmp/nid_grab.png"))
     elif cmd == "menu":
         print("menu reached" if ensure_menu(int(sys.argv[2])) else "no menu")
+    elif cmd == "await":
+        # loading 105 MB of data.win takes 2.5-3 minutes on this box: never assume 20 s
+        limit = float(os.environ.get("NID_WINDOW_WAIT", "300"))
+        t0 = time.time()
+        while time.time() - t0 < limit:
+            if window(int(sys.argv[2])):
+                print(f"window after {time.time()-t0:.0f}s")
+                break
+            time.sleep(5)
+        else:
+            print(f"no window after {limit:.0f}s")
     elif cmd == "ping":
         print(ping(_game_pid(int(sys.argv[2]))))
     else:
