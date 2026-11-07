@@ -161,6 +161,9 @@ invariants, failure modes and an example env wrapper; then the ML side writes ag
   Python sent `addr hex ms`; `hold` then blocked the spy thread for ~12 days per call.
 * **A "negative" result is a deliverable** — every worker that reported one moved the project
   forward.
+* **Never `pkill -f`.** A worker's brief is (or was) part of its own command line, so
+  `pkill -f Nidhogg` matches the worker itself and it dies instantly with a 0-byte log. Use
+  `pkill -x <exact name>`, or pass the brief on **stdin** so the cmdline stays short.
 
 ## 7. Already cheap (measured, for the ML side)
 
@@ -183,6 +186,19 @@ docs/SESSION_LOG.md  docs/SESSION_LOG.jsonl.gz   (this conversation, for context
 `docs/SESSION_LOG.jsonl.gz` is the full transcript; `docs/SESSION_LOG.md` is the readable,
 tool-output-truncated version. Drop the `.gz` from the repo if size matters — it is context,
 not code.
+
+## 9b. Container path: deferred to Monday
+
+Docker is installed on artemis but the user is not in the `docker` group, and the sysadmin is
+unavailable until Monday. The container is therefore **written but not built**
+(`docker/Dockerfile`, `docker/entry.sh`, `docker/build.sh`), and the **host path is primary**
+until then. Nothing about the host path depends on it: isolation already works via
+`NIDFARM`/`NID_DISPLAY_BASE`, and 384 cores are plenty for ~10–20 instances at 0.4–0.6 core
+each.
+
+Why Debian and not Alpine (decided): Proton/Proton-GE is glibc-linked, Alpine is musl; running
+Proton there needs gcompat/Steam-runtime shims and turns every debugging session into a libc
+investigation. `debian:bookworm-slim` reproduces the validated stack.
 
 ## 9. Server readiness (measured on artemis, 384 cores / 1.1 TB / 9.8 TB free)
 
