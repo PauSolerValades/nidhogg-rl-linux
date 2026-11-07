@@ -283,3 +283,32 @@ memory we read is the object that is drawn"* — with a negative control that fa
 attract demo. That assertion is the precondition for every remaining contract row (sword,
 death, rounds, animation states), and it is what makes parallel workers safe: they can refuse
 to work in a bad state instead of spending 25 minutes measuring noise.
+
+## The game runs on the server (artemis, Ubuntu 24.04, 384 cores, no GPU, no sudo)
+
+First working launch, verified through our own code (`nidstate.grab` → luma 21–25, window
+alive):
+
+```
+window after 25 s (warm prefix; ~2.5–3 min cold, loading data.win is 105 MB)
+DISPLAY=:41  PROTON_USE_WINED3D=1  proton run  ->  Nidhogg.exe
+```
+
+### Three root causes, in order of how much time they cost
+
+1. **The Steam stub was the bug, not the fix.** `gbe_fork` (and plain Goldberg) hang inside
+   `SteamAPI_Init` — the game stays at 2 threads in `do_select` and never creates a window.
+   With **Valve's original `steam_api64.dll`** the init call simply *fails* and the game
+   carries on. We do not need a stub at all.
+2. **`proton waitforexitandrun` runs `wineserver -w` first**, which blocks forever if any
+   wineserver persists on the box. Use **`proton run`**.
+3. **Loading takes 2.5–3 minutes and our waits were 90 s** — and worse, *workers' own cleanup
+   scripts* (`pkill -9 -x Nidhogg.exe`, `pkill -f 'proton waitforexitandrun'`) were killing
+   every launch ~60 s in. No launch could ever have survived. `NID_WINDOW_WAIT` is now 300 s
+   and `nidlinux.py await <i>` waits properly.
+
+Server-specific notes: `PROTON_USE_WINED3D=1` avoids DXVK/lavapipe shader-compile stalls on a
+GPU-less box (lavapipe *is* installed and valid; the stalls were shader compilation, not a
+missing device). `xdotool` needs the runtime env (`PATH` + `libxdo.so.3`) or it exits silently.
+`data.win` at 320×200 makes the window cheap; the game renders at 640×480 screen with a
+320×200 window.
