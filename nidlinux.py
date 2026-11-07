@@ -31,8 +31,12 @@ HOME = Path.home()
 # One farm per worker: own prefixes, own procs.json, own logs -> agents cannot collide.
 FARM = Path(os.environ.get("NIDFARM") or (HOME / ".nidfarm"))
 STEAM = HOME / ".local/share/Steam"
-PROTON = STEAM / "steamapps/common/Proton - Experimental/proton"
-GAME = FARM / "game/Nidhogg.exe"
+# Both are overridable so a user-level (no sudo, no Steam client) install can be plugged in
+# without editing this file: NID_PROTON=<path to the proton script> NID_GAME_DIR=<game dir>.
+PROTON = Path(os.environ.get("NID_PROTON")
+              or STEAM / "steamapps/common/Proton - Experimental/proton")
+GAME_DIR = Path(os.environ.get("NID_GAME_DIR") or (FARM / "game"))
+GAME = GAME_DIR / "Nidhogg.exe"
 PROCS = FARM / "procs.json"
 SPY = Path(__file__).parent / "spy/nidspy.so"
 DISPLAY_BASE = int(os.environ.get("NID_DISPLAY_BASE", "10"))
@@ -75,7 +79,9 @@ def start_ids(ids):
                            check=True)
         env = dict(os.environ)
         env.pop("WAYLAND_DISPLAY", None)
-        env.update(DISPLAY=disp, STEAM_COMPAT_CLIENT_INSTALL_PATH=str(STEAM),
+        env.update(DISPLAY=disp,
+                   STEAM_COMPAT_CLIENT_INSTALL_PATH=str(
+                       Path(os.environ.get("NID_STEAM_ROOT") or STEAM)),
                    STEAM_COMPAT_DATA_PATH=str(prefix), SteamAppId="94400",
                    SteamGameId="94400", LD_PRELOAD=str(SPY))
         log = open(FARM / f"logs/py_{i}.log", "ab")
@@ -175,13 +181,53 @@ def keyup(i, keysym):
 # ---------------------------------------------------------------- eyes
 
 
+def _which(*names):
+    for name in names:
+        if subprocess.run(["sh", "-c", f"command -v {name}"],
+                          capture_output=True).returncode == 0:
+            return name
+    return None
+
+
+IMPORT = None          # resolved lazily; ImageMagick is optional
+CAN_IMAGEMAGICK = None
+
+
+def _geometry(i):
+    """Window x, y, w, h as ints (needed by the ffmpeg capture path)."""
+    w = window(i)
+    if not w:
+        return None
+    out = subprocess.run(["xdotool", "getwindowgeometry", "--shell", w],
+                         env=_env(i), capture_output=True, text=True).stdout
+    vals = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+    try:
+        return (int(vals["X"]), int(vals["Y"]), int(vals["WIDTH"]), int(vals["HEIGHT"]))
+    except (KeyError, ValueError):
+        return None
+
+
 def grab(i, path="/tmp/nid_grab.png"):
-    """Instant window-only screenshot (ImageMagick import; ffmpeg x11grab lags)."""
+    """Window-only screenshot. ImageMagick `import` when available, else ffmpeg x11grab
+    of the window rectangle -- a server install without sudo has no ImageMagick."""
+    global IMPORT
+    if IMPORT is None:
+        IMPORT = _which("import") or ""
     w = _focus(i)
     if not w:
         return None
-    subprocess.run(["import", "-display", _pids()[str(i)]["display"], "-window", w, path],
-                   check=True, capture_output=True)
+    if IMPORT:
+        subprocess.run([IMPORT, "-display", _pids()[str(i)]["display"],
+                        "-window", w, path], check=True, capture_output=True)
+        return path
+    geo = _geometry(i)
+    if not geo:
+        return None
+    x, y, ww, hh = geo
+    disp = _pids()[str(i)]["display"]
+    subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "x11grab",
+                    "-video_size", f"{ww}x{hh}", "-i", f"{disp}+{x},{y}",
+                    "-frames:v", "1", "-y", path], check=True, capture_output=True)
     return path
 
 
@@ -190,9 +236,19 @@ def frame(i, path="/tmp/nid_f.png"):
     p = grab(i, path)
     if not p:
         return None
-    w, h = subprocess.run(["magick", "identify", "-format", "%w %h", p],
-                          capture_output=True, text=True).stdout.split()
-    raw = subprocess.run(["magick", p, "-depth", "8", "rgb:-"], capture_output=True).stdout
+    magick = _which("magick", "convert")
+    if magick:
+        w, h = subprocess.run([magick, "identify", "-format", "%w %h", p],
+                              capture_output=True, text=True).stdout.split()
+        raw = subprocess.run([magick, p, "-depth", "8", "rgb:-"],
+                             capture_output=True).stdout
+    else:
+        w, h = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                               "-show_entries", "stream=width,height", "-of", "csv=p=0", p],
+                              capture_output=True, text=True).stdout.strip().split(",")
+        raw = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-i", p,
+                              "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                             capture_output=True).stdout
     return np.frombuffer(raw, np.uint8).reshape(int(h), int(w), 3)
 
 
