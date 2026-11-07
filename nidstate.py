@@ -651,3 +651,113 @@ def control_gate(i, verbose=True):
               f"({'ok' if c_ok else 'PROBLEM'})")
 
     return ev["A_drivable"] > 15 and b_ok and c_ok, ev
+
+
+# ---------------------------------------------------------------- entry: menu -> READY -> match
+#
+# The multiplayer-local path is the most useful one for RL: it ends in a match where BOTH
+# fighters are ours (self-play on one instance), and the only menu step is "Return x3" from the
+# title. The READY screen gates the match: each player stands on their own coloured pad for ~2 s
+# and when both are on, stage select appears and a match starts.
+#
+# All of it is closed-loop on pixels: pads are the widest colour run in the lower half, fighters
+# are colour blobs, and "am I on the pad" is a distance comparison. Nothing depends on menu timing.
+
+PAD_COLOURS = {"yellow": (200, 200, 90), "orange": (200, 105, 205, 115)}
+P1_KEYS = ("a", "d")          # yellow, measured
+P2_KEYS = ("Left", "Right")   # orange: arrows, measured (i/j/k/l do nothing)
+
+
+def _mask(a, which):
+    r, g, b = (a[:, :, k].astype(int) for k in range(3))
+    if which == "yellow":
+        return (r > 200) & (g > 200) & (b < 90)
+    return (r > 200) & (g > 105) & (g < 205) & (b < 115)
+
+
+def _longest_run(row):
+    idx = np.nonzero(row)[0]
+    if not len(idx):
+        return None
+    best = cur = [idx[0], idx[0]]
+    for a, b in zip(idx, idx[1:]):
+        if b - a <= 2:
+            cur[1] = b
+        else:
+            if cur[1] - cur[0] > best[1] - best[0]:
+                best = list(cur)
+            cur = [b, b]
+    if cur[1] - cur[0] > best[1] - best[0]:
+        best = list(cur)
+    return best
+
+
+def pad_and_fighter(i, which, name="pad"):
+    """(pad_x0, pad_x1, pad_y, fighter_x) or None. None means 'no pad on screen'."""
+    a = frame(i, name)
+    if a is None:
+        return None
+    m = _mask(a, which)
+    h, w = m.shape
+    pad_y, pad_run = None, None
+    for y in range(int(h * 0.55), h):
+        rn = _longest_run(m[y])
+        if rn and rn[1] - rn[0] > 25:
+            if pad_run is None or rn[1] - rn[0] > pad_run[1] - pad_run[0]:
+                pad_y, pad_run = y, rn
+    if pad_run is None:
+        return None
+    body = m.copy()
+    body[max(0, pad_y - 4):, :] = False
+    ys, xs = np.nonzero(body)
+    fx = float(xs.mean()) if len(xs) > 20 else None
+    return pad_run[0], pad_run[1], int(pad_y), fx
+
+
+def on_ready_screen(i):
+    return pad_and_fighter(i, "yellow", "rd1") is not None
+
+
+def enter_ready(i, tries=6, wait=1.0):
+    """From the title, land on READY (multiplayer local). Return x3 with retries."""
+    for attempt in range(tries):
+        if on_ready_screen(i):
+            return True
+        n.key(i, "Return", hold=0.12)
+        time.sleep(wait)
+    return on_ready_screen(i)
+
+
+def walk_onto_pad(i, which, tol=7, max_steps=30):
+    left, right = P1_KEYS if which == "yellow" else P2_KEYS
+    for step in range(max_steps):
+        loc = pad_and_fighter(i, which, f"w{which}")
+        if not loc:
+            return False
+        px0, px1, _py, fx = loc
+        if fx is None:
+            return False
+        centre = (px0 + px1) / 2
+        off = centre - fx
+        if abs(off) <= tol:
+            return True
+        n.key(i, right if off > 0 else left, hold=min(0.35, max(0.06, abs(off) / 400.0)))
+        time.sleep(0.12)
+    return False
+
+
+def enter_match(i, verbose=True):
+    """READY -> both fighters on their pads -> stand 2 s -> match. Returns True if it happened."""
+    if not enter_ready(i):
+        if verbose:
+            print("  could not reach READY")
+        return False
+    ok1 = walk_onto_pad(i, "yellow")
+    ok2 = walk_onto_pad(i, "orange")
+    if verbose:
+        print(f"  on pads: yellow={ok1} orange={ok2}; standing 2.5 s")
+    time.sleep(2.5)
+    left_ready = not on_ready_screen(i)          # pads gone = we advanced
+    if verbose:
+        print(f"  advanced past READY: {left_ready}")
+    return left_ready
