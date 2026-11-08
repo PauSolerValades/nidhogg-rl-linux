@@ -481,3 +481,36 @@ So "the largest mover" is the wrong heuristic in a wide room (it picks a camera 
 fighter is one of ~10 fighter-sized movers. Next refinement: require the same record to answer
 **both** directions (`d` then `a`, returning by the same amount) and to have a sword sibling at
 `+0x400` — that should collapse the 10 to 1.
+
+## ENTRY SOLVED (worker p, 4 parallel instances + 2 fresh verifications)
+
+The pad trigger, swept as a symmetric offset `d` from the wall:
+
+```
+firing band      d = 0.28 .. 0.42 W      (0.28, 0.30, 0.333, 0.36, 0.38, 0.42 all fired)
+best             d = 0.333 W             verified twice on fresh instances: 2.74 s and 2.69 s
+dead inner zone  d = 0.267 W             held 32 s, never fired — the inner third of the pad
+outside          d >= 0.44 W
+stage select     appears ~1.5 s after the last movement key (measured 2.6-2.7 s with ~0.9 s
+                 screenshot granularity), cue = lit chandelier + castle preview
+```
+
+The pads really are at wall ∓ 0.33 W (yellow bar 24..85 px, orange 243..295 px at W=320). The reason
+0.32 W looked unreliable for a whole afternoon: **the "widest colour run" pad detector is
+contaminated by the fighter standing on it** — it reported a 100 px bar instead of 61 px, so the
+"pad centre" it gave was 0.267 W, which is inside the dead zone.
+
+`nidstate.enter_match_v2()` implements this and returned **True in 58 s** end to end
+(boot → 3 presses → park both → 2.7 s → stage select → Return → verified match).
+
+### Detector corrections that came out of it
+
+* `_fighters_visible()` / `on_stage_select()` assume the ground line is above `0.62 H`. In the
+  **castle** room the ground is at ~0.77 H, so both report nonsense there. Do not use them as match
+  detectors.
+* `find_players_by_input()` **also succeeds in menus and on READY** — drivability proves nothing on
+  its own.
+* Match detector that works: **no menu box AND no wall AND drivable** (`nidstate.in_match`), because
+  the wall exists only on READY.
+* `Escape`/`Backspace` do nothing on stage select and there is no way back to READY: a second entry
+  needs a restart, not a key sequence.
