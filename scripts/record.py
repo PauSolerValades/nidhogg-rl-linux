@@ -31,15 +31,34 @@ out = Path.home() / "nidhogg-record" / time.strftime("%Y%m%d-%H%M%S")
 print(f"recording into {out}")
 
 pid = ns.pid_of(i)
-print("identifying players (needs a live match; play until it succeeds)…")
+# IMPORTANT: identification presses d/a/Right/Left. If a human is playing, those presses move
+# their fighter and their own presses break the "stopped after release" test, so identification
+# can never succeed while keys are being pressed. Therefore: wait for a *quiet* stretch (the
+# fighter is not moving on its own) and only then probe, with long gaps between attempts.
+print("waiting for a QUIET stretch in a live match — please stand still ~25 s once the round starts")
 ident = None
-t_end = time.time() + 600
+t_end = time.time() + 1800
+attempt = 0
 while time.time() < t_end and ident is None:
-    ident = q.identify(i, verbose=False)
-    if ident and ident.get("p1") and ident.get("p2"):
-        break
-    ident = None
-    time.sleep(2)
+    attempt += 1
+    q_ok = True
+    try:
+        pid0 = ns.pid_of(i)
+        raw = ns.n.memory(pid0, *ns.biggest_heap(pid0), "/tmp/rec_quiet.bin")
+        a1 = raw[:4096] if raw else b""
+        time.sleep(0.5)
+        a2 = ns.n.memory(pid0, *ns.biggest_heap(pid0), "/tmp/rec_quiet.bin") or b""
+        q_ok = a1 == a2[:len(a1)]
+    except Exception:
+        q_ok = False
+    if q_ok:
+        ident = q.identify(i, verbose=False)
+        if ident and ident.get("p1") and ident.get("p2"):
+            break
+        ident = None
+    else:
+        print(f"  (not quiet — someone is playing; waiting) attempt {attempt}")
+    time.sleep(8)
 if not ident:
     sys.exit("could not identify players — start a match first")
 p1 = ident["p1"][0][0]
