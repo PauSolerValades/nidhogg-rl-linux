@@ -82,7 +82,16 @@ def evaluate(probes, verbose=False):
     cd, ca = sel(D, +1), sel(A, -1)
 
     def sib(a, pr):
-        """arm (+0x200) and sword (+0x400) follow the body? body is the head of the chain."""
+        """arm (+0x200) / sword (+0x400) follow the body? body is the head of the chain.
+
+        OPTIONAL: the 0x200 chain REALLOCATES during play (worker U measured the sword sliding
+        from +0x400 to +0x200 and the arm slot disappearing), so requiring both siblings rejects
+        a perfectly good body in a long session. QPROBE_CHAIN=0 turns the test off; the
+        sign + size + stop + reverse conditions then carry the identification, and P1/P2
+        exclusivity separates the pair.
+        """
+        if os.environ.get("QPROBE_CHAIN", "1") == "0":
+            return True
         da = pr[a + 0x200][0] if a + 0x200 in pr else None
         ds = pr[a + 0x400][0] if a + 0x400 in pr else None
         ok = (da is not None and ds is not None
