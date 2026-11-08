@@ -76,23 +76,36 @@ def f(addr):
     return ns.read_f(pid, addr)
 
 
-def tick():
-    """A counter that runs at ~60 Hz: search once, then reuse."""
+def _find_tick():
+    """A counter that runs at ~60 Hz: scan once, then reuse its address for the session."""
+    import struct
+
+    import numpy as np
+    pid0 = ns.pid_of(i)
+    a, b = ns.biggest_heap(pid0)
+    raw = ns.n.memory(pid0, a, b - a, "/tmp/rec_t1.bin")
+    if raw is None:
+        return 0
+    v0 = np.frombuffer(raw[: len(raw) // 4 * 4], "<u4").copy()
+    time.sleep(1.0)
+    raw = ns.n.memory(pid0, a, b - a, "/tmp/rec_t2.bin")
+    if raw is None:
+        return 0
+    v1 = np.frombuffer(raw[: len(v0) * 4], "<u4")
+    d = v1.astype(np.int64) - v0.astype(np.int64)
+    cand = np.nonzero((d > 48) & (d < 72))[0]
+    return a + int(cand[0]) * 4 if len(cand) else 0
+
+
+def tick(pid0=None):
+    import struct
     global TICK
     if TICK is None:
-        import numpy as np
-        raw = ns.n.memory(pid, *ns.biggest_heap(pid), "/tmp/rec_t.bin")
-        a = np.frombuffer(raw[: len(raw) // 4 * 4], "<u4")
-        v0 = a.copy()
-        time.sleep(1.0)
-        raw = ns.n.memory(pid, *ns.biggest_heap(pid), "/tmp/rec_t.bin")
-        b = np.frombuffer(raw[: min(len(raw), len(v0) * 4)] // 4 * 4, "<u4")
-        d = b[: len(v0)].astype(np.int64) - v0.astype(np.int64)
-        cand = np.nonzero((d > 48) & (d < 72))[0]
-        TICK = ns.biggest_heap(pid)[0] + int(cand[0]) * 4 if len(cand) else 0
-        print(f"tick field {TICK:#x}")
-    raw = ns.n.memory(pid, TICK, 4, "/tmp/rec_t2.bin")
-    import struct
+        TICK = _find_tick()
+        print(f"tick field {TICK:#x}" if TICK else "tick field not found (recording without it)")
+    if not TICK:
+        return 0
+    raw = ns.n.memory(ns.pid_of(i), TICK, 4, "/tmp/rec_t3.bin")
     return struct.unpack("<I", raw)[0] if raw else 0
 
 
@@ -106,12 +119,13 @@ with open(csv_path, "w", newline="") as fh:
     last_heap = last_shot = 0.0
     while time.time() - t0 < seconds:
         now = time.time() - t0
-        t = tick() if TICK is None or now % 5 < 0.1 else tick()
+        t = tick()
         w.writerow([f"{now:.3f}", t,
                     *(f(p1 + XO) or 0, f(p1 + YO) or 0, f(p2 + XO) or 0, f(p2 + YO) or 0),
                     *(f(p1 + 0x400 + XO) or 0, f(p1 + 0x400 + YO) or 0,
                       f(p2 + 0x400 + XO) or 0, f(p2 + 0x400 + YO) or 0),
                     f(p1 + ANIM) or 0, f(p1 + FACE) or 0])
+        fh.flush()
         if now - last_shot > 0.5:
             last_shot = now
             ns.grab(i, str(out / "shots" / f"{int(now*1000):08d}.png"))
