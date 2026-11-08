@@ -35,7 +35,15 @@ pid = ns.pid_of(i)
 # their fighter and their own presses break the "stopped after release" test, so identification
 # can never succeed while keys are being pressed. Therefore: wait for a *quiet* stretch (the
 # fighter is not moving on its own) and only then probe, with long gaps between attempts.
-print("waiting for a QUIET stretch in a live match — please stand still ~25 s once the round starts")
+# --p1/--p2 <hex>: skip identification and record these addresses (use when they are already
+# proven for this process — identification itself presses keys, which a human will feel).
+_argp1 = sys.argv[sys.argv.index("--p1") + 1] if "--p1" in sys.argv else None
+_argp2 = sys.argv[sys.argv.index("--p2") + 1] if "--p2" in sys.argv else None
+if _argp1 and _argp2:
+    p1, p2 = int(_argp1, 16), int(_argp2, 16)
+    print(f"using given addresses: P1 {p1:#x}  P2 {p2:#x}")
+    ident = {"p1": [(p1,)], "p2": [(p2,)]}
+    print("waiting for a QUIET stretch in a live match — please stand still ~25 s once the round starts")
 ident = None
 t_end = time.time() + 1800
 attempt = 0
@@ -55,7 +63,7 @@ while time.time() < t_end and ident is None:
         time.sleep(0.6)
         x2 = {a: v[0] for a, v in ns._all_record_xs(pid0).items()}
         movers = sum(1 for a, v in x1.items() if a in x2 and abs(x2[a] - v) > 2.0)
-        q_ok = movers <= 40
+        q_ok = True   # ambient animation also moves records; do not gate on this
         if not q_ok:
             print(f"  ({movers} records moving — you are playing; waiting for still)")
     except Exception as e:
