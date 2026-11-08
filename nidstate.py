@@ -780,21 +780,78 @@ def walk_onto_pad(i, which, tol=7, max_steps=30):
     return False
 
 
-def enter_match(i, verbose=True):
-    """READY -> both fighters on their pads -> stand 2 s -> match. Returns True if it happened."""
+def _wall_x(i, name="wall"):
+    """Screen x of the central wall: a tall light-grey vertical band (camera-relative landmark)."""
+    a = frame(i, name)
+    if a is None:
+        return None
+    r, g, b = (a[:, :, k].astype(int) for k in range(3))
+    light = (r > 150) & (r < 235) & (np.abs(r - g) < 18) & (np.abs(g - b) < 18)
+    h = light.shape[0]
+    band = light[int(h * 0.05):int(h * 0.55), :].mean(0)
+    cols = np.nonzero(band > 0.6)[0]
+    if len(cols) < 8:
+        return None
+    groups = np.split(cols, np.nonzero(np.diff(cols) > 4)[0] + 1)
+    return float(max(groups, key=len).mean())
+
+
+def _walk_to_x(i, which, target, tol=8, max_steps=30):
+    left, right = P1_KEYS if which == "yellow" else P2_KEYS
+    for _ in range(max_steps):
+        a = frame(i, f"wx_{which}")
+        if a is None:
+            return False
+        m = _mask(a, which)
+        m[int(m.shape[0] * 0.62):, :] = False         # ignore pads/floor
+        ys, xs = np.nonzero(m)
+        if len(xs) < 20:
+            return False
+        off = target - float(xs.mean())
+        if abs(off) <= tol:
+            return True
+        n.key(i, right if off > 0 else left, hold=min(0.30, max(0.05, abs(off) / 600.0)))
+        time.sleep(0.10)
+    return False
+
+
+def enter_match(i, verbose=True, wait_land=2.5):
+    """READY -> both fighters onto their pads -> match, verified by input (not by pixels).
+
+    The pads sit 0.32*W from the central wall (measured; a quarter-screen leaves the fighters
+    standing beside them). Verification is `find_players_by_input`, because "the pads disappeared"
+    is a false signal — the fighter covers its own pad.
+    """
     if not enter_ready(i):
         if verbose:
             print("  could not reach READY")
         return False
-    ok1 = walk_onto_pad(i, "yellow")
-    ok2 = walk_onto_pad(i, "orange")
+    wx = _wall_x(i)
+    if wx is not None:
+        a = frame(i, "geom")
+        off = 0.32 * a.shape[1]
+        ok1 = _walk_to_x(i, "yellow", wx - off)
+        ok2 = _walk_to_x(i, "orange", wx + off)
+    else:
+        ok1 = walk_onto_pad(i, "yellow")
+        ok2 = walk_onto_pad(i, "orange")
     if verbose:
-        print(f"  on pads: yellow={ok1} orange={ok2}; standing 2.5 s")
+        print(f"  walked onto pads: yellow={ok1} orange={ok2}; standing 2.5 s")
     time.sleep(2.5)
-    left_ready = not on_ready_screen(i)          # pads gone = we advanced
-    if verbose:
-        print(f"  advanced past READY: {left_ready}")
-    return left_ready
+    for attempt in range(3):
+        time.sleep(wait_land)                 # fighters spawn high and FALL: let them land
+        players = find_players_by_input(i, hold=0.5)
+        if players:
+            if verbose:
+                print(f"  match live: P1={players['P1']:#x} "
+                      f"P2={players['P2']:#x}" if players.get("P2") else "  P1 only")
+            return True
+        if verbose:
+            print(f"  attempt {attempt}: not drivable yet; nudging")
+        n.key(i, "Return", hold=0.12)          # may still be on READY
+        time.sleep(0.8)
+        _walk_to_x(i, "yellow", wx - 0.32 * 320) if wx else None
+    return False
 
 
 def find_fighters_verified(i, hold=0.5, min_move=20.0):
@@ -860,6 +917,8 @@ def ensure_match(i, attempts=3, verbose=True):
     "already in a match" is not the same as "usable". Only the causal test can tell.
     """
     for attempt in range(attempts):
+        if find_players_by_input(i, hold=0.4):
+            return True
         st = match_state(i)
         if verbose:
             print(f"  attempt {attempt}: state={st}")
@@ -871,7 +930,7 @@ def ensure_match(i, attempts=3, verbose=True):
                     return True
         else:
             if enter_ready(i):
-                if enter_match(i, verbose=verbose) and find_fighters_verified(i):
+                if enter_match(i, verbose=verbose) and find_players_by_input(i, hold=0.4):
                     return True
         if verbose:
             print("  restarting instance (stale round or wrong screen)")
@@ -881,7 +940,7 @@ def ensure_match(i, attempts=3, verbose=True):
         while time.time() - t0 < 300 and not n.window(i):
             time.sleep(5)
         time.sleep(12)                     # splash is ~10 s of ignored input
-    return match_state(i) == "live"
+    return bool(find_players_by_input(i, hold=0.4))
 
 
 # ---------------------------------------------------------------- players by input, not by type
