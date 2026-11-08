@@ -120,11 +120,21 @@ with open(csv_path, "w", newline="") as fh:
     while time.time() - t0 < seconds:
         now = time.time() - t0
         t = tick()
+        # ONE spy round trip for both bodies: 12 individual reads cost 12 x 50 ms of poll
+        # latency (measured: the recorder managed 0.8 Hz), a 0x600-byte block per body costs one.
+        import struct
+        blobs = ns.n.memory_many(pid, [(p1, 0x600, "/tmp/rec_b1.bin"),
+                                       (p2, 0x600, "/tmp/rec_b2.bin")])
+        def g(blob, off):
+            if not blob or off + 4 > len(blob):
+                return 0.0
+            return struct.unpack("<f", blob[off:off + 4])[0]
+        b1, b2 = (blobs + [None, None])[:2]
         w.writerow([f"{now:.3f}", t,
-                    *(f(p1 + XO) or 0, f(p1 + YO) or 0, f(p2 + XO) or 0, f(p2 + YO) or 0),
-                    *(f(p1 + 0x400 + XO) or 0, f(p1 + 0x400 + YO) or 0,
-                      f(p2 + 0x400 + XO) or 0, f(p2 + 0x400 + YO) or 0),
-                    f(p1 + ANIM) or 0, f(p1 + FACE) or 0])
+                    g(b1, XO), g(b1, YO), g(b2, XO), g(b2, YO),
+                    g(b1, 0x400 + XO), g(b1, 0x400 + YO),
+                    g(b2, 0x400 + XO), g(b2, 0x400 + YO),
+                    g(b1, ANIM), g(b1, FACE)])
         fh.flush()
         if now - last_shot > 0.5:
             last_shot = now
