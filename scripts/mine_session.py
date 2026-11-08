@@ -98,11 +98,12 @@ if __name__ == "__main__":
     hs = heaps(d / "heaps")
     print(f"session {d.name}: {len(list((d/'shots').glob('*.png')))} shots, {len(hs)} heaps, "
           f"{len(ev)} candidate events")
-    for t, mag, fa, fb in ev[:20]:
-        print(f"  event {t:7.1f}s  magnitude {mag:5.1f}")
+    for t, kind in ev[:24]:
+        print(f"  {t:7.1f}s  {kind}")
     if do_diff and hs:
         print("\ndiffing heaps around the first events:")
-        for t, mag, fa, fb in ev[:top]:
+        for t, kind in ev[:top]:
+            print(f"  [{kind} @ {t:.1f}s]")
             pair = around(hs, t)
             if not pair[0] or not pair[1]:
                 print(f"  {t:7.1f}s: no heap pair")
