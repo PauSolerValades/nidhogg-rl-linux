@@ -41,16 +41,25 @@ t_end = time.time() + 1800
 attempt = 0
 while time.time() < t_end and ident is None:
     attempt += 1
-    q_ok = True
+    # "quiet" = almost nothing on screen is moving: count records whose x changes in 0.6 s.
+    # A human in a live match moves many; an idle round moves few. This is the signal that the
+    # probe's d/a presses will not be confused with the player's own input.
+    q_ok = False
     try:
         pid0 = ns.pid_of(i)
-        raw = ns.n.memory(pid0, *ns.biggest_heap(pid0), "/tmp/rec_quiet.bin")
-        a1 = raw[:4096] if raw else b""
-        time.sleep(0.5)
-        a2 = ns.n.memory(pid0, *ns.biggest_heap(pid0), "/tmp/rec_quiet.bin") or b""
-        q_ok = a1 == a2[:len(a1)]
-    except Exception:
-        q_ok = False
+        a1 = {a: v[0] for a, v in q._all_record_xs(pid0).items()} if hasattr(q, "_all_record_xs") else None
+        if a1 is None:
+            x1 = {a: v[0] for a, v in ns._all_record_xs(pid0).items()}
+        else:
+            x1 = a1
+        time.sleep(0.6)
+        x2 = {a: v[0] for a, v in ns._all_record_xs(pid0).items()}
+        movers = sum(1 for a, v in x1.items() if a in x2 and abs(x2[a] - v) > 2.0)
+        q_ok = movers <= 40
+        if not q_ok:
+            print(f"  ({movers} records moving — you are playing; waiting for still)")
+    except Exception as e:
+        print(f"  quiet check failed: {e}")
     if q_ok:
         ident = q.identify(i, verbose=False)
         if ident and ident.get("p1") and ident.get("p2"):
