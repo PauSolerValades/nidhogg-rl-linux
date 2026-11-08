@@ -84,3 +84,21 @@ Suggested method:
 ```
 
 Final message: 8 lines max.
+
+## Extra evidence from a quick manual run (use it)
+
+After `enter_match_v2` + 3 s, holding `d`/`a` gave **2** symmetric candidates and **0** for the
+arrows:
+
+```
+0x71512c6dca00   d -156.0   back +151.3   stop 0.0     <- symmetric but WRONG DIRECTION (camera-ish)
+0x71512c5e6400   d  +22.1   back  -22.6   stop 0.0     <- walk-sized, plausible P1
+P2: 0 candidates with Right/Left
+```
+
+So: (a) symmetry alone is not enough — also require the **sign** to match the key (`d` must increase
+x, `a` must decrease it; a camera copy moves the other way), and (b) **P2 may not answer the arrow
+keys in a match** the way it does on READY. Check whether P2 is alive/spawned at all, and try
+`Left/Right`, `Up/Down`, `i/j/k/l`, and the pause menu's OPTIONS screen (which shows the bindings)
+before concluding P2 is absent. If P2 really is not drivable in a local match, say so explicitly —
+that changes the whole RL plan (self-play would need two instances instead of one).
