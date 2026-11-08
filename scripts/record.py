@@ -39,43 +39,29 @@ pid = ns.pid_of(i)
 # proven for this process — identification itself presses keys, which a human will feel).
 _argp1 = sys.argv[sys.argv.index("--p1") + 1] if "--p1" in sys.argv else None
 _argp2 = sys.argv[sys.argv.index("--p2") + 1] if "--p2" in sys.argv else None
+
 if _argp1 and _argp2:
+    # Addresses already proven for this process: skip identification entirely. Identification
+    # itself presses d/a/Right/Left, which a human player feels as "someone is moving my
+    # character" — so by default we never do it while someone is playing.
     p1, p2 = int(_argp1, 16), int(_argp2, 16)
-    print(f"using given addresses: P1 {p1:#x}  P2 {p2:#x}")
+    print(f"using given addresses: P1 {p1:#x}  P2 {p2:#x} (no probing)")
     ident = {"p1": [(p1,)], "p2": [(p2,)]}
-    print("waiting for a QUIET stretch in a live match — please stand still ~25 s once the round starts")
-ident = None
-t_end = time.time() + 1800
-attempt = 0
-while time.time() < t_end and ident is None:
-    attempt += 1
-    # "quiet" = almost nothing on screen is moving: count records whose x changes in 0.6 s.
-    # A human in a live match moves many; an idle round moves few. This is the signal that the
-    # probe's d/a presses will not be confused with the player's own input.
-    q_ok = False
-    try:
-        pid0 = ns.pid_of(i)
-        a1 = {a: v[0] for a, v in q._all_record_xs(pid0).items()} if hasattr(q, "_all_record_xs") else None
-        if a1 is None:
-            x1 = {a: v[0] for a, v in ns._all_record_xs(pid0).items()}
-        else:
-            x1 = a1
-        time.sleep(0.6)
-        x2 = {a: v[0] for a, v in ns._all_record_xs(pid0).items()}
-        movers = sum(1 for a, v in x1.items() if a in x2 and abs(x2[a] - v) > 2.0)
-        q_ok = True   # ambient animation also moves records; do not gate on this
-        if not q_ok:
-            print(f"  ({movers} records moving — you are playing; waiting for still)")
-    except Exception as e:
-        print(f"  quiet check failed: {e}")
-    if q_ok:
-        ident = q.identify(i, verbose=False)
+else:
+    print("identifying players — this presses keys; do not play for ~25 s")
+    ident = None
+    t_end = time.time() + 1800
+    while time.time() < t_end and ident is None:
+        try:
+            ident = q.identify(i, verbose=False)
+        except Exception as e:
+            print("  probe error:", e)
+            ident = None
         if ident and ident.get("p1") and ident.get("p2"):
             break
         ident = None
-    else:
-        print(f"  (not quiet — someone is playing; waiting) attempt {attempt}")
-    time.sleep(8)
+        time.sleep(8)
+
 if not ident:
     sys.exit("could not identify players — start a match first")
 p1 = ident["p1"][0][0]
