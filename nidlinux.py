@@ -103,6 +103,8 @@ def clean_farm(fresh=False):
 
 def start_ids(ids, fresh=False):
     clean_farm(fresh=fresh)
+    (FARM / "inst").mkdir(parents=True, exist_ok=True)   # cp needs the parent to exist
+    (FARM / "logs").mkdir(parents=True, exist_ok=True)
     procs = _pids()
     for i in ids:
         disp = f":{DISPLAY_BASE + i}"
