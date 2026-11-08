@@ -18,7 +18,7 @@ confirmed it. Everything else stays `unknown`, however plausible it looks.
 | 10 | round score | HUD pips / int that increments | — | — | unknown |
 | 11 | round phase | READY / live / ended | — | — | unknown |
 | 12 | round timer | counting int | let it tick | **negative**: 878 int32 slots decrement at 60 Hz, none is selective | unknown |
-| 13 | which instance is us (P1/P2) | input only: d/a vs arrows | hold the key | sign + walk-size + stop + sibling chain; 3/3 fresh instances | **proven** (worker q) |
+| 13 | which instance is us (P1/P2) | input only: d/a vs arrows | hold the key | sign + walk-size + stop + sibling chain; 3/3 fresh instances. **Roles are NOT bound to addresses: they swap** (worker q attempt 4; human observation) — re-prove after every transition | **proven, must be re-proved per round** |
 | 14 | tick / frame counter | **u32 @ heap-relative**, found by rate test | nothing (it ticks by itself) | 60.0 Hz, 4 % jitter over 10 s; 320 duplicate slots | **proven** (worker T; address is per process) |
 | 15 | room / stage id | — | force a transition | **negative**: 42 270 stable-and-differing slots at the boundary; needs a second same-stage return to compare | unknown |
 

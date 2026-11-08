@@ -542,3 +542,28 @@ Also learned: **the recorder must never probe while a human plays** — its iden
 press `d`/`a`/`Right`/`Left`, which the player feels as "someone is moving my character", and the
 player's own input breaks the "stops when released" test that identification depends on. Hence the
 `--p1/--p2` flag: probe once, in a controlled pause, then never again.
+
+## Roles (P1/P2) are NOT attached to addresses — they swap
+
+Measured twice, from two directions:
+
+* worker `q`, attempt 4 of 3/3-verified runs: the two body addresses came back **swapped**
+  (P1 = 0x190dc00, P2 = 0x190d400) with identical, correct traces — the *roles* were right, the
+  address order was not.
+* the human player, watching the game: "P1 and P2 get swapped sometimes, dunno how memory managed
+  that" — the allocation is not stable across rounds/rooms.
+
+Consequences, all of which we must keep obeying:
+
+1. **Never infer role from address, allocation order, or "the lower address".** Role comes from
+   input only: pressing P1's key (`d`/`a`) moves *that record*, pressing P2's key (arrows) moves the
+   other one.
+2. **Re-verify roles after every transition** (round end, room change, respawn). A cached
+   `p1=..., p2=...` pair can silently swap meaning between rounds, which would silently corrupt any
+   reward or observation that assumes a fixed player.
+3. **Recordings should be role-free wherever possible.** The structural event detector labels
+   events by *colour presence* (`yellow` / `orange`), which is stable on screen, rather than by the
+   memory role — that is why the kill timeline we extracted from the screenshots is trustworthy
+   even though the body pointers had gone stale.
+4. When a session needs per-player state in memory, store both addresses with their **current**
+   proven role and the timestamp of that proof, and re-prove on transition rather than trusting it.
