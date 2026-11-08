@@ -406,3 +406,25 @@ the per-tick state file (Phase 5) must pin the addresses once instead of re-scan
 
 **Lesson for the record: every constant inherited from one room is a bug in the next room.**
 Room width, window size and camera behaviour all change between screens.
+
+## Identification must be causal, not type-based
+
+In a live match the two players are **not** in the same type group: P1 sat in type `0x174f900`
+(x 1112, moved +29 on `d`) while P2's records were at `0x1908400`/`0x190ac00` (x 958 → 1028 on
+`Right`, y 192) in a *different* group. The type pointer at `+0x88` is a good candidate generator
+and nothing more.
+
+`nidstate.find_players_by_input(i)` therefore identifies by input alone:
+
+```
+dump all records -> x for each -> hold 'd' 0.6 s -> the largest clean mover is P1
+                              -> hold 'Right' 0.6 s -> another record is P2
+```
+
+It runs in ~6 s (2 dumps, cached regions). Also measured:
+
+* scan cost: **1.9 s cold / 335 ms cached** (down from 7.6 s) — the old cost was pure spy-poll
+  latency (120 commands × 50 ms), fixed by queueing all dumps in one command file;
+* a fresh match spawns the fighters **high up and they fall**, and a finished round teleports them
+  (traces ending at the same x ~1943), so probes must run in the first seconds after `GO` and the
+  round state must be part of the check.

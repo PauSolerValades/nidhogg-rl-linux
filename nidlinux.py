@@ -376,6 +376,30 @@ def memory(pid, addr, size, path="/tmp/nid_dump.bin"):
     return out.read_bytes() if out.exists() else None
 
 
+def memory_many(pid, requests, timeout=15.0):
+    """Read several ranges in ONE spy round trip.
+
+    Each individual request costs a full spy poll interval (~50 ms), so scanning 120 regions one
+    at a time wasted ~6 s doing nothing. The spy drains every queued line in a single pass, so
+    queueing them all costs one poll and then pure copy time.
+    """
+    cmd = Path(f"/tmp/nid_cmd_{pid}")
+    lines = []
+    for addr, size, path in requests:
+        cmd_out = Path(path)
+        cmd_out.unlink(missing_ok=True)
+        lines.append(f"dump {addr:x} {size:x} {path}")
+    cmd.write_text("\n".join(lines) + "\n")
+    t0 = time.time()
+    while cmd.exists() and time.time() - t0 < timeout:
+        time.sleep(0.01)
+    out = []
+    for addr, size, path in requests:
+        p = Path(path)
+        out.append(p.read_bytes() if p.exists() else None)
+    return out
+
+
 def poke(pid, addr, raw):
     Path(f"/tmp/nid_cmd_{pid}").write_text(f"poke {addr:x} {raw.hex()}\n")
     time.sleep(0.2)

@@ -518,6 +518,19 @@ def moving_fighters(pid, wait=0.45, lo=1.0, hi=120.0):
 TYPE_OFF = 0x88
 
 
+_HEAP_CACHE = {}
+
+
+def _cached_heaps(pid):
+    """Regions that produced records last time (validated against /proc/<pid>/maps)."""
+    hit = _HEAP_CACHE.get(pid)
+    if not hit:
+        return None
+    live = set(regions(pid))
+    keep = [r for r in hit if r in live]
+    return keep or None
+
+
 def find_fighters(pid, heap=None):
     """[(addr, x, y, type_ptr)] for the fighter bodies — type found by grouping, not by ID.
 
@@ -527,10 +540,15 @@ def find_fighters(pid, heap=None):
     # biggest_heap() is not the object heap: on some prefixes the largest rw mapping is a
     # 133 MB zero-filled reservation, and scanning only that returns [] in EVERY room
     # (measured on READY and in a match).  Scan every rw region and merge the findings.
-    heaps = [heap] if heap else [r for r in regions(pid) if r[1] - r[0] >= (1 << 20)]
+    if heap:
+        heaps = [heap]
+    else:
+        heaps = _cached_heaps(pid) or [r for r in regions(pid) if r[1] - r[0] >= (1 << 20)]
+    # one round trip for all regions instead of one per region (saves ~50 ms x N)
+    reqs = [(a, b - a, f"/tmp/ff_{i}.bin") for i, (a, b) in enumerate(heaps)]
+    blobs = n.memory_many(pid, reqs)
     out = []
-    for a, b in heaps:
-        raw = n.memory(pid, a, b - a, "/tmp/ff.bin")
+    for (a, b), raw in zip(heaps, blobs):
         if raw is None:
             continue
         u32 = np.frombuffer(raw[: len(raw) // 4 * 4], "<u4")
@@ -557,10 +575,14 @@ def find_fighters(pid, heap=None):
     pairs = {}
     for rec in out:
         pairs.setdefault(rec[3], []).append(rec)
-    return [r for g in pairs.values()
-            if len(g) == 2 and abs(g[0][2] - g[1][2]) < 25 and abs(g[0][1] - g[1][1]) > 1
-            for r in g]
-    return out
+    pairs_out = [r for g in pairs.values()
+                 if len(g) == 2 and abs(g[0][2] - g[1][2]) < 25 and abs(g[0][1] - g[1][1]) > 1
+                 for r in g]
+    if pairs_out and not heap:
+        hit = {r for r in heaps if any(r[0] <= a < r[1] for a, _x, _y, _t in pairs_out)}
+        if hit:
+            _HEAP_CACHE[pid] = sorted(hit)
+    return pairs_out
 
 
 # ---------------------------------------------------------------- CONTROL GATE
@@ -775,11 +797,6 @@ def enter_match(i, verbose=True):
     return left_ready
 
 
-def read_x(pid, addr):
-    raw = n.memory(pid, addr + X_OFF, 4, "/tmp/rx.bin")
-    return float(np.frombuffer(raw, "<f4")[0]) if raw else None
-
-
 def find_fighters_verified(i, hold=0.5, min_move=20.0):
     """The fighter pair, chosen by BEHAVIOUR: P1 moves on 'd' while P2 stays bit-identical.
 
@@ -865,3 +882,74 @@ def ensure_match(i, attempts=3, verbose=True):
             time.sleep(5)
         time.sleep(12)                     # splash is ~10 s of ignored input
     return match_state(i) == "live"
+
+
+# ---------------------------------------------------------------- players by input, not by type
+#
+# find_fighters() groups records by the object-type pointer at +0x88 — a good *candidate*
+# generator, but it is not the truth: in a live match P2's records were in a different type group
+# than P1's (measured: P1 type 0x174f900 at x 1112; P2 at 0x1908400, x 958 -> 1028 on 'Right').
+# The only reliable identification is the input itself:
+#
+#   press P1's key   -> exactly one record's x advances and then stops  = P1
+#   press P2's key   -> another record does the same                    = P2
+#
+# This also survives room changes, different objects per skin, and duplicates at the same x.
+
+def _all_record_xs(pid, heap=None):
+    """{record_addr: x} for every 0x200 record with a plausible coordinate."""
+    heaps = [heap] if heap else (_cached_heaps(pid) or
+                                 [r for r in regions(pid) if r[1] - r[0] >= (1 << 20)])
+    reqs = [(a, b - a, f"/tmp/ax_{i}.bin") for i, (a, b) in enumerate(heaps)]
+    out = {}
+    for (a, b), raw in zip(heaps, n.memory_many(pid, reqs)):
+        if raw is None:
+            continue
+        f = np.frombuffer(raw[: len(raw) // 4 * 4], "<f4")
+        idx = np.arange(0, len(f) - Y_OFF // 4 - 1, REC // 4)
+        xs = f[idx + X_OFF // 4]
+        ys = f[idx + Y_OFF // 4]
+        with np.errstate(invalid="ignore"):
+            ok = (np.isfinite(xs) & np.isfinite(ys)
+                  & (xs > 0) & (xs < 2200) & (ys > 15) & (ys < 300))
+        for j in np.nonzero(ok)[0]:
+            out[a + int(idx[j]) * 4] = (float(xs[j]), float(ys[j]))
+    return out
+
+
+def find_players_by_input(i, hold=0.6, min_move=15.0):
+    """{'P1': addr, 'P2': addr, 'trace': …} by pressing each player's key. None if not drivable."""
+    pid = pid_of(i)
+    base = _all_record_xs(pid)
+    if not base:
+        return None
+
+    def moved(key, exclude=()):
+        before = {a: v[0] for a, v in base.items() if a not in exclude}
+        n.key(i, key, hold=hold)
+        time.sleep(0.25)
+        after = _all_record_xs(pid)
+        deltas = []
+        for a, x0 in before.items():
+            if a in after:
+                d = after[a][0] - x0
+                if abs(d) >= min_move:
+                    deltas.append((abs(d), a, d, x0, after[a][0]))
+        deltas.sort(reverse=True)
+        # the fighter is the largest clean mover; duplicates of it sit at the same delta
+        return deltas
+
+    d_moves = moved("d")
+    if not d_moves:
+        return None
+    p1 = d_moves[0][1]
+    r_moves = moved("Right", exclude={a for _m, a, *_ in d_moves[:4]})
+    if not r_moves:
+        return {"P1": p1, "P2": None,
+                "trace": {"d": {"addr": p1, "delta": round(d_moves[0][2], 1)}}}
+    p2 = r_moves[0][1]
+    return {"P1": p1, "P2": p2,
+            "trace": {"d": {"addr": p1, "from": round(d_moves[0][3], 1),
+                            "to": round(d_moves[0][4], 1)},
+                      "Right": {"addr": p2, "from": round(r_moves[0][3], 1),
+                                "to": round(r_moves[0][4], 1)}}}
