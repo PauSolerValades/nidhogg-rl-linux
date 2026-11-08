@@ -760,11 +760,14 @@ def enter_ready(i, tries=8, wait=1.0):
     moment of success (and "advanced" when nothing had happened).
     """
     for _ in range(tries):
-        if _fighters_visible(i, "er"):
+        # READY = both fighters drawn AND the central wall present. The attract demo also draws
+        # fighters, so "fighters visible" alone matches the title screen (that false positive
+        # made enter_match fail on "wall not found" two seconds later).
+        if _fighters_visible(i, "er") and _wall_x(i, "erw") is not None:
             return True
         n.key(i, "Return", hold=0.12)
         time.sleep(wait)
-    return _fighters_visible(i, "er_end")
+    return _fighters_visible(i, "er_end") and _wall_x(i, "erw2") is not None
 
 
 def walk_onto_pad(i, which, tol=7, max_steps=30):
