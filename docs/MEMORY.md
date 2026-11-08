@@ -514,3 +514,31 @@ contaminated by the fighter standing on it** — it reported a 100 px bar instea
   the wall exists only on READY.
 * `Escape`/`Backspace` do nothing on stage select and there is no way back to READY: a second entry
   needs a restart, not a key sequence.
+
+## Human-in-the-loop session (2026-11-08): what worked, what didn't
+
+Built and verified: **VNC so the human can play the real game** (`scripts/vnc_play.sh`, Xtigervnc on
+`:50` + noVNC/websockify on `:6080`, patched the same way as Xvfb so it finds `xkbcomp` in
+`/tmp/xkb`), and a recorder (`scripts/record.py`) that logs ~20 Hz state, 2 Hz screenshots and a
+1.1 GB heap dump every 10 s.
+
+Everything around the game works. Identification in a *long-running* session does not:
+
+* `QPROBE_CHAIN=0` (dropping the 0x200 sibling test because it reallocates) lets **camera copies**
+  through: P2's track read `131, 1088, 890, 784, 0, 832, 1190, 101 …` — teleporting, not walking.
+* With the chain ON plus an anim-plausibility filter at `+0xbc`, **nothing** passes in that room
+  (161 s of probing, 0 candidates).
+* Probe-free identification by watching the human move also failed: the records that move are
+  level geometry (six records with identical 32 px deltas, spaced 64 px apart).
+* Type-based re-binding failed too: the READY-era type ids do not exist on fighters in the match
+  room (P1's type: zero matches; P2's: five props at y=160).
+
+**Conclusion: identification works when the match is fresh** (worker `q`: 3/3 on fresh instances,
+chain ON, within the first seconds) and decays as the session runs and the 0x200 chain reallocates.
+So the operating rule is: *identify immediately after entering a match, in a quiet moment, then
+record* — not "identify whenever, mid-session".
+
+Also learned: **the recorder must never probe while a human plays** — its identification retries
+press `d`/`a`/`Right`/`Left`, which the player feels as "someone is moving my character", and the
+player's own input breaks the "stops when released" test that identification depends on. Hence the
+`--p1/--p2` flag: probe once, in a controlled pause, then never again.

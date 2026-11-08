@@ -99,9 +99,20 @@ def evaluate(probes, verbose=False):
         head = not (a - 0x200 in pr and abs(pr[a - 0x200][0] - pr[a][0]) <= 4)
         return ok and head
 
+    def anim_ok(a):
+        """A real body carries a plausible animation index at +0xbc (worker R: idle ~461-465,
+        walk ~433-457). Camera-derived copies read denormals like 8e-43, so this cheap test
+        rejects them without relying on the 0x200 sibling chain, which reallocates during play."""
+        import struct
+        raw = ns.n.memory(pid, a + 0xBC, 4, "/tmp/qa.bin")
+        if not raw:
+            return False
+        v = struct.unpack("<I", raw)[0]
+        return 1 <= v <= 4000
+
     p1 = [(a, vd[0], ca[a][0]) for a, vd in cd.items()
           if a in ca and abs(vd[0] + ca[a][0]) <= max(6.0, 0.25 * abs(vd[0]))
-          and sib(a, D)]
+          and sib(a, D) and anim_ok(a)]
     p1a = {x[0] for x in p1}
     p2 = []
     for key_r, key_l in ALT_KEYS:
@@ -112,7 +123,8 @@ def evaluate(probes, verbose=False):
             for a, vr in sel(R, sr).items():
                 if a not in L or a in p1a:
                     continue
-                if abs(vr[0] + L[a][0]) <= max(6.0, 0.25 * abs(vr[0])) and sib(a, R):
+                if (abs(vr[0] + L[a][0]) <= max(6.0, 0.25 * abs(vr[0])) and sib(a, R)
+                        and anim_ok(a)):
                     p2.append((a, sr, vr[0], L[a][0]))
         if p2:
             break
