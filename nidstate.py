@@ -546,7 +546,9 @@ def find_fighters(pid, heap=None):
                 y = np.frombuffer(raw[o + Y_OFF: o + Y_OFF + 4], "<f4")[0]
                 if not (np.isfinite(x) and np.isfinite(y)):
                     continue
-                if not (1.0 <= x <= 1100.0 and 20.0 <= y <= 260.0):
+                # rooms differ in width: the READY room is ~320/960 wide, a castle match was
+                # measured with x up to 1856. A hard 1100 cap silently hid the fighters there.
+                if not (0.0 <= x <= 2200.0 and 15.0 <= y <= 300.0):
                     continue
                 out.append((a + o, float(x), float(y), int(v)))
     # two instances of one object type only count as fighters if they stand on the same

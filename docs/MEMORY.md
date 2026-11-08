@@ -382,3 +382,27 @@ Known limitation: the camera follows the moving player, so walking one fighter c
 out of view (`orange: fighter not visible`). The robust fix is to walk in **room-space using
 `x@+0xEC`** instead of screen pixels — which needs the fighter records that `find_fighters` is
 currently failing to find in a fresh farm (worker `v` is on it).
+
+## `find_fighters` had a hardcoded room width — and that hid the fighters
+
+The x filter was `1.0 <= x <= 1100.0`, a constant from the 320/960-wide READY room. A castle match
+on this box has **x up to 1856**, so every fighter record was filtered out and the function
+returned 0 records in a live match — which looked exactly like "the records stop existing after
+READY". Widening to `0..2200` (the range worker `m` had used in their own scan) fixed it:
+
+```
+find_fighters          -> 16 records (8 type-groups of two), 7.6 s
+find_fighters_verified -> {"P1": 0x…, "P2": 0x…, "type": 0x…,
+                           "trace": {"d":     {"p1": [15, 1248],  "p2": [1024, 1024]},
+                                     "Right": {"p1": [1248, 1248], "p2": [1024, 992]}}}
+```
+
+The causal test passes: `Right` moves exactly one member (−32) and leaves the other identical; `d`
+moves the other. (P1's 15 → 1248 jump under `d` is suspicious — probably a respawn or a round
+boundary during the probe, not a walk; worth re-measuring on a quiet instance.)
+
+Scan cost: 7.6 s per call over 120 regions. That is fine for mapping, too slow for a 60 Hz loop —
+the per-tick state file (Phase 5) must pin the addresses once instead of re-scanning.
+
+**Lesson for the record: every constant inherited from one room is a bug in the next room.**
+Room width, window size and camera behaviour all change between screens.
