@@ -11,9 +11,10 @@
 static int g_pid;
 
 static void *loop(void *arg) {
-    char cmd[64], res[64];
+    char cmd[64], res[64], cmd_done[80];
     snprintf(cmd, sizeof cmd, "/tmp/nid_cmd_%d", g_pid);
     snprintf(res, sizeof res, "/tmp/nid_res_%d", g_pid);
+    snprintf(cmd_done, sizeof cmd_done, "/tmp/nid_cmd_%d.done", g_pid);
     for (;;) {
         usleep(50000);
         FILE *f = fopen(cmd, "r");
@@ -93,7 +94,11 @@ static void *loop(void *arg) {
             }
         }
         fclose(f);
-        unlink(cmd);
+        /* Drain loses a command written while we were reading it: unlink() deletes the new
+           file. Rename ours away and delete *that*, so a fresh write survives to the next
+           poll. (Worker W measured lost poke/hold commands without this.) */
+        if (rename(cmd, cmd_done) == 0) unlink(cmd_done);
+        else unlink(cmd);
     }
     return NULL;
 }
