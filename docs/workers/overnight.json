@@ -1,0 +1,172 @@
+{
+ "ok": true,
+ "recorder": {
+  "all_regions": true,
+  "regions": 117,
+  "dump_mb": 1075,
+  "note": "region chooser = ns.regions(pid): every rw mapping 1 MB..200 MB, which includes [heap]; old recorder kept 15 regions/386 MB. Session_overnight: 117 regions / 1075 MB per dump. Session_phase: 118 regions / 1081 MB. The 7 regions worker Z named are all present and mappable: 0x8402000, 0xa102000, 0xa210000, 0xc4f0000, 0xd202000, 0xd412000, 0xece0000, plus [heap] 0x55556d61d000 (31 MB). Volatile 1032 KB GL regions disappear mid-session, so missing regions are zero-padded and logged in layout.jsonl - otherwise every later dump's offsets shift (the first, unpadded run is kept as results/session_overnight_unpadded and has 3 different dump sizes).",
+  "sessions": [
+   "results/session_overnight (117 regions, 28 dumps, ~30 GB)",
+   "results/session_phase (118 regions, 21 dumps, ~22 GB)",
+   "results/session_overnight_unpadded (first run; the region list changed mid-session, kept as the example of why padding is required)"
+  ]
+ },
+ "round_win": {
+  "achieved": true,
+  "how": "LOCAL match -> live round -> pause (Escape) -> FORFEIT (2x Down+Return) -> YES: the pause dialog says 'YELLOW FORFEITS?', the round ends immediately with an ORANGE 'Winner' screen (KILLS 1 / SUICIDES 0), ENTER CONTINUE returns to READY and the ORANGE WINS tally gains one bar. Repeated twice in one recording: 0 -> 1 -> 2.",
+  "boundary_time_s": 100.9,
+  "boundary_time_s_2": 172.8,
+  "hud_evidence": "results/session_overnight/marker_ready_score0.png (blank), marker_ready_score1.png (one bar), marker_ready_score2.png (two bars), marker_winner1.png / marker_winner2.png (orange Winner screens)",
+  "recording": "results/session_overnight",
+  "rounds_won_in_overnight_recording": 2,
+  "rounds_won_in_phase_recording": 1
+ },
+ "candidates": {
+  "pre_boundary_zero": 4,
+  "post_boundary_two": 1,
+  "in_new_regions": 4,
+  "scan": "u32 == 0 in all 14 pre dumps AND == 1 in all 8 score-1 dumps AND == 2 in the score-2 dump; 4 survivors, all in the 7 rw regions the old recorder missed (1 in 0xd412000, 3 in 0xece0000); no survivor in the big GM heap or the old region set",
+  "hits": [
+   "0xd5f57c8",
+   "0xf3c6368",
+   "0xf3c63e8",
+   "0xf3c6468"
+  ],
+  "found": 4,
+  "dumps_pre_mid_post": [
+   14,
+   8,
+   1
+  ],
+  "post_boundary_one": 4
+ },
+ "score": {
+  "addr": "0xd5f57c8",
+  "region": "0xd412000-0xdd10000 (base fixed across processes; found at the same absolute address in two independent recordings/processes)",
+  "hud_before": "blank",
+  "hud_after": "bar",
+  "glyph7": false,
+  "proven": true,
+  "value_encoding": "u32 integer (0,1,2); the HUD tally is drawn from this value",
+  "poke_evidence": {
+   "recorded process 1885744 (score 2)": "write 0 -> P2 digit rect 46 bar px => 2 px (blank); write 1 -> 24 px / 1 bar; write 2 -> 46 px / 2 bars; read-back confirmed every write; ping ok; restored 2",
+   "second process 1979883 (score 1)": "baseline 24 px / 1 bar; write 0 -> 2 px (blank); write 1 -> 24 px; ping ok; restored 1",
+   "glyph7": "write 7 (and 3,4,100) renders the SAME tally as the score already displayed (46 px = 2 bars in the score-2 process, 24 px = 1 bar in the score-1 process): the READY tally is capped by the number of rounds played / the glyph set has no >2 form, so a distinct glyph for 7 cannot be produced. 0<->blank and 1<->one bar are exact.",
+   "second process 1979883, after a 2nd forfeit win (score 2, rounds played 2)": "value reads 2 and the ORANGE WINS tally draws 46 px = two bars; write 0 -> 2 px (blank); write 1 -> 24 px (one bar); write 7 -> 46 px (two bars = the cap); write 2 -> 46 px; every read-back matched, ping ok, restored 2"
+  },
+  "artifacts": [
+   "results/hud_v0.png",
+   "results/hud_v1.png",
+   "results/hud_v7.png",
+   "results/rep_score0.png",
+   "results/s2_score0.png",
+   "results/s2_score1.png",
+   "results/s2_score2.png",
+   "results/s3_score.png",
+   "results/s3_score0.png",
+   "results/s3_score1.png",
+   "results/s3_score7.png",
+   "results/s3_ready_score2.png"
+  ],
+  "cap_note": "The READY tally is one bar per win capped by the number of rounds already played: in a process that had played 1 round, poking 2 drew 1 bar; after a 2nd round, poking 2/7 drew 2 bars. So the field is the wins value the HUD draws, but the HUD has no distinct >2 rendering - a 7 glyph cannot be produced by design.",
+  "processes": [
+   "1885744 (session_overnight, score 0->1->2)",
+   "1979883 (session_phase, score 0->1 then a 2nd forfeit win -> 2)"
+  ],
+  "allocation_note": "0xd5f57c8 is the wins cell once a round/match has been played (both recorded processes, mined independently, land on the same absolute address in the fixed-base 0xd412000 region). At a brand-new READY with no round played, that offset is not yet the wins cell (a poke there crashed one process). So: stable and safe to use after the first round, not a static global from process start."
+ },
+ "phase": {
+  "addr": null,
+  "flips_at_boundary": true,
+  "proven": false,
+  "candidates_0_ready_1_live_0_ready": 2283,
+  "note": "2283 u32 slots are constant in all 7 READY dumps, constant in all 5 LIVE dumps, and constant again in the 3 post-round READY dumps (a != b). 1583 of them are in the new regions. The clean 0/1 and 0/3 cells were poked both ways: 15 clean candidates poked to 0 inside a live round (no round end, no wall, no HUD, ping ok, restored), and 8 poked to 1 at READY (no match start). None is the phase driver; the phase is either not the field I tested or is not consulted while the state machine is already running.",
+  "tested_at_ready": [
+   "0xd5f382c",
+   "0xd5f38ec",
+   "0xd5f0bec",
+   "0xd5f0c2c",
+   "0xd5ecb6c",
+   "0xd5ecdec",
+   "0xdce79bc",
+   "0xd3e8048"
+  ],
+  "tested_live_poked_to_0": [
+   "0xdce79bc",
+   "0xdd0f700",
+   "0xd5ecb6c",
+   "0xd5ecbec",
+   "0xd5eccac",
+   "0xd5eccec",
+   "0xd5ecd2c",
+   "0xd5ecdec",
+   "0xd5f0a98",
+   "0xd5f0bec",
+   "0xd5f0c2c",
+   "0xd5f382c",
+   "0xd5f38ec",
+   "0xd3e8048",
+   "0xd3f6958"
+  ]
+ },
+ "neighbours": [
+  {
+   "addr": "0xd5f57c0",
+   "rel": "-8",
+   "value": "0xFB3ECD98 / 0x6FFF (pointer + tag pair)"
+  },
+  {
+   "addr": "0xd5f57c8",
+   "rel": "0",
+   "value": "ORANGE WINS counter (u32 0..2)"
+  },
+  {
+   "addr": "0xd5f57cc",
+   "rel": "+4",
+   "value": "0 (not the P1 counter: poking 1 leaves the YELLOW rect blank)"
+  },
+  {
+   "addr": "0xd5f57d0",
+   "rel": "+8",
+   "value": "16 (poking 1: no HUD change)"
+  },
+  {
+   "addr": "0xd5f57d8",
+   "rel": "+16",
+   "value": "0x104Axxxx pointer"
+  },
+  {
+   "addr": "0xd5f5800",
+   "rel": "+0x38",
+   "value": "same 0xFB3ECD98 / 0x6FFF pointer pair (0x38-byte stride)"
+  },
+  {
+   "addr": "0xd5f57a4",
+   "rel": "-0x24",
+   "value": "3"
+  },
+  {
+   "addr": "0xd5f57a8",
+   "rel": "-0x20",
+   "value": "3"
+  },
+  {
+   "addr": "0xd5f5798",
+   "rel": "-0x30",
+   "value": "1"
+  }
+ ],
+ "crashes": 2,
+ "crash_log": [
+  "pid 1885744: writing float 1.0f (0x3F800000) to the score 0xd5f57c8 at READY killed the process within 0.5 s (the int writes 0/1/2/7/100 were all safe). The renderer evidently indexes a glyph sprite/frame by the raw int.",
+  "pid 1967166: writing u32 2 to 0xd5f57c8 at a FRESH READY, before any round had been played, killed the process; poking 1 there did not redraw the tally either. Interpretation: the wins cell is allocated when the round/match state exists - at a fresh READY that offset still belongs to another allocation, and writing into it corrupted that object. In both recorded processes (1885744, 1979883) the wins counter is at 0xd5f57c8 once a round has been played, and the pokes are safe and visible."
+ ],
+ "dead_ends": [
+  "25 u32 candidates inside the old 15-region set (worker Z) were all display-unrelated; the score is indeed only in the newly dumped regions (0xd412000 / 0xece0000).",
+  "The other 3 interval survivors (0xf3c6368/0xf3c63e8/0xf3c6468, 0x80-stride records in 0xece0000) track 0->1->2 but poking 0 at them does not change the HUD: copies/related counters, not the displayed value.",
+  "The P1 (YELLOW) wins counter was NOT found: it stays 0 through this session, so the 0->1 interval signature cannot see it. The candidates adjacent to 0xd5f57c8 (+4, +8, +0x38) do not drive the YELLOW rect.",
+  "Writing x into a live fighter body (0x1902800 +0xEC / +0xFC) is overwritten within one tick: the game recomputes the body position, so teleporting a fighter to the goal is not possible with a plain write. This is why the round was won by forfeit instead.",
+  "The READY tally is not a decimal digit but one bar per win, capped by the rounds already played; a '7' poke therefore cannot produce a distinct glyph in the tally cell.",
+  "Long idle LIVE windows are stable (35 s, no round end), so the READY->LIVE field (phase) needs a behavioural poke; the 0/1 candidate list (2283 total) was not narrowed enough in the remaining budget."
+ ]
+}

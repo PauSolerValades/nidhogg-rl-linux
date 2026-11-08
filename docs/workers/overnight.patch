@@ -1,0 +1,35 @@
+--- scripts/record.py	2026-11-08 20:41:48.121832153 +0000
++++ /tmp/record_new.py	2026-11-08 21:39:03.911008506 +0000
+@@ -143,7 +143,7 @@
+         if now - last_heap > heap_every:
+             last_heap = now
+             if not REGIONS:
+-                REGIONS.extend(ns.record_regions(pid))
++                REGIONS.extend(ns.regions(pid))   # ALL rw regions >=1 MB, no object-record filter
+                 print(f"dumping {len(REGIONS)} region(s), "
+                       f"{sum(b-a for a,b in REGIONS)/1e6:.0f} MB total")
+                 # the region set can change between sessions, so a dump OFFSET is only
+@@ -152,10 +152,20 @@
+                 (out / "regions.json").write_text(_json.dumps(
+                     [{"base": hex(a), "size": b - a} for a, b in REGIONS], indent=1))
+             path = out / "heaps" / f"{int(now*1000):08d}.bin"
++            # ONE spy round trip for ~120 regions; pad missing (volatile GL) regions so every
++            # dump has identical byte offsets (a vanished region otherwise shifts the layout).
++            reqs = [(a, b - a, f"/tmp/rec_h{k}.bin") for k, (a, b) in enumerate(REGIONS)]
++            blobs = ns.n.memory_many(pid, reqs, timeout=30.0)
++            missing = []
+             with open(path, "wb") as hf:
+-                for a, b in REGIONS:
+-                    blob = ns.n.memory(pid, a, b - a, "/tmp/rec_h.bin")
+-                    hf.write(blob or b"")
++                for k, ((a, b), blob) in enumerate(zip(REGIONS, blobs)):
++                    if blob is None or len(blob) != b - a:
++                        missing.append(k)
++                        blob = b"\0" * (b - a)
++                    hf.write(blob)
++            with open(out / "layout.jsonl", "a") as lf:
++                import json as _j
++                lf.write(_j.dumps({"t_ms": int(now*1000), "missing": missing}) + "\n")
+             nz = sum(1 for _ in [0])  # placeholder
+             if path.stat().st_size == 0:
+                 print("  dump failed (0 bytes)")
