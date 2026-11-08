@@ -100,6 +100,9 @@ def evaluate(probes, verbose=False):
         return ok and head
 
     def anim_ok(a):
+        if os.environ.get("QPROBE_ANIM", "1") == "0":
+            return True
+        pid = globals().get("_CUR_PID")
         """A real body carries a plausible animation index at +0xbc (worker R: idle ~461-465,
         walk ~433-457). Camera-derived copies read denormals like 8e-43, so this cheap test
         rejects them without relying on the 0x200 sibling chain, which reallocates during play."""
@@ -145,6 +148,7 @@ def identify(i, tries=4, verbose=False, settle=0.4):
     """Identification with a retry: a fighter can be pinned against scenery, in which case
     the reversal test finds nothing. Reposition and probe again."""
     pid = ns.pid_of(i)
+    globals()["_CUR_PID"] = pid
     used = 0
     for t in range(tries):
         used = t + 1
