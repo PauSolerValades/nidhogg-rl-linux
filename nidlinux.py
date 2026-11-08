@@ -368,7 +368,7 @@ def memory(pid, addr, size, path="/tmp/nid_dump.bin"):
     cmd = Path(f"/tmp/nid_cmd_{pid}")
     cmd.write_text(f"dump {addr:x} {size:x} {path}\n")
     t0 = time.time()
-    while cmd.exists() and time.time() - t0 < 3:      # fail fast: a dead spy must not hang us
+    while cmd.exists() and time.time() - t0 < 10:     # a 112 MB dump takes ~0.2 s idle, more under load
         time.sleep(0.02)
     if cmd.exists():
         cmd.unlink(missing_ok=True)
