@@ -481,24 +481,27 @@ def biggest_heap(pid):
 
 
 def record_regions(pid, min_size=1 << 20):
-    """Regions worth dumping: the ones that actually CONTAIN state.
+    """Regions worth dumping: those that actually contain object records.
 
-    Two filters that each catch a real failure we hit: skip regions whose sampled pages are all
-    zero, and keep only regions where a 0x200-stride record has plausible coordinates (that is the
-    object heap, not a reservation).
+    Three traps this avoids, all measured today:
+      * the largest rw mapping can be a 133 MB zero-filled reservation (worker m);
+      * sampling a few pages lets mostly-empty regions through (only 9 nonzero u32 in 1 MB);
+      * the object heap can move between rooms, so "the" heap must be re-discovered.
+    A region qualifies only if a 0x200-stride record in it has plausible coordinates.
     """
+    cands = [r for r in regions(pid) if r[1] - r[0] >= min_size]
+    reqs = [(a, b - a, f"/tmp/rr_{k}.bin") for k, (a, b) in enumerate(cands)]
     out = []
-    for a, b in regions(pid):
-        if b - a < min_size:
+    for (a, b), raw in zip(cands, n.memory_many(pid, reqs)):
+        if not raw:
             continue
-        size = b - a
-        live = False
-        for off in (0, size // 2, max(0, size - 4096)):
-            pr = n.memory(pid, a + off, min(4096, size - off), "/tmp/rr_probe.bin")
-            if pr and any(pr):
-                live = True
-                break
-        if live:
+        f = np.frombuffer(raw[: len(raw) // 4 * 4], "<f4")
+        idx = np.arange(0, len(f) - Y_OFF // 4 - 1, REC // 4)
+        xs, ys = f[idx + X_OFF // 4], f[idx + Y_OFF // 4]
+        with np.errstate(invalid="ignore"):
+            ok = (np.isfinite(xs) & np.isfinite(ys)
+                  & (xs > 0) & (xs < 2400) & (ys > 15) & (ys < 400))
+        if ok.any():
             out.append((a, b))
     return out
 
