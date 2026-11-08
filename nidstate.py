@@ -524,27 +524,31 @@ def find_fighters(pid, heap=None):
     Verified against the orange sprite's on-screen x within 1.4..1.6 px (fixed camera), and
     P1's x tracked the yellow sprite 1:1 over 8/8 `d`/`a` transitions.
     """
-    a, b = heap or biggest_heap(pid)
-    raw = n.memory(pid, a, b - a, "/tmp/ff.bin")
-    if raw is None:
-        return []
-    u32 = np.frombuffer(raw[: len(raw) // 4 * 4], "<u4")
-    idx = np.arange(0, min(len(u32) - TYPE_OFF // 4, len(u32)), REC // 4)
-    types = u32[idx + TYPE_OFF // 4]
-    vals, counts = np.unique(types, return_counts=True)
+    # biggest_heap() is not the object heap: on some prefixes the largest rw mapping is a
+    # 133 MB zero-filled reservation, and scanning only that returns [] in EVERY room
+    # (measured on READY and in a match).  Scan every rw region and merge the findings.
+    heaps = [heap] if heap else [r for r in regions(pid) if r[1] - r[0] >= (1 << 20)]
     out = []
-    for v, c in zip(vals, counts):
-        if c != 2 or v == 0:
+    for a, b in heaps:
+        raw = n.memory(pid, a, b - a, "/tmp/ff.bin")
+        if raw is None:
             continue
-        for j in np.nonzero(types == v)[0]:
-            o = int(idx[j]) * 4
-            x = np.frombuffer(raw[o + X_OFF: o + X_OFF + 4], "<f4")[0]
-            y = np.frombuffer(raw[o + Y_OFF: o + Y_OFF + 4], "<f4")[0]
-            if not (np.isfinite(x) and np.isfinite(y)):
+        u32 = np.frombuffer(raw[: len(raw) // 4 * 4], "<u4")
+        idx = np.arange(0, min(len(u32) - TYPE_OFF // 4, len(u32)), REC // 4)
+        types = u32[idx + TYPE_OFF // 4]
+        vals, counts = np.unique(types, return_counts=True)
+        for v, c in zip(vals, counts):
+            if c != 2 or v == 0:
                 continue
-            if not (1.0 <= x <= 1100.0 and 20.0 <= y <= 260.0):
-                continue
-            out.append((a + o, float(x), float(y), int(v)))
+            for j in np.nonzero(types == v)[0]:
+                o = int(idx[j]) * 4
+                x = np.frombuffer(raw[o + X_OFF: o + X_OFF + 4], "<f4")[0]
+                y = np.frombuffer(raw[o + Y_OFF: o + Y_OFF + 4], "<f4")[0]
+                if not (np.isfinite(x) and np.isfinite(y)):
+                    continue
+                if not (1.0 <= x <= 1100.0 and 20.0 <= y <= 260.0):
+                    continue
+                out.append((a + o, float(x), float(y), int(v)))
     # two instances of one object type only count as fighters if they stand on the same
     # ground line and are actually apart -- this kills the hundreds of junk "pairs" that
     # merely happen to share whatever sits at +0x88 (zero-filled records, decorations).
@@ -767,3 +771,95 @@ def enter_match(i, verbose=True):
     if verbose:
         print(f"  advanced past READY: {left_ready}")
     return left_ready
+
+
+def read_x(pid, addr):
+    raw = n.memory(pid, addr + X_OFF, 4, "/tmp/rx.bin")
+    return float(np.frombuffer(raw, "<f4")[0]) if raw else None
+
+
+def find_fighters_verified(i, hold=0.5, min_move=20.0):
+    """The fighter pair, chosen by BEHAVIOUR: P1 moves on 'd' while P2 stays bit-identical.
+
+    `find_fighters()` returns every type-group of two with plausible coordinates — including
+    static props. The only reliable discriminator is causality: press a player's key, and exactly
+    one member of the pair must move and then stop. Verified in a live match:
+    'd' -> x 897 -> 967 (+70, other member constant 1023), 'Right' -> 1023 -> 1095 (+72).
+
+    Returns {"P1": addr, "P2": addr, "type": t, "trace": {...}} or None.
+    """
+    pid = pid_of(i)
+    groups = {}
+    for a, x, y, t in find_fighters(pid):
+        groups.setdefault(t, []).append(a)
+    for t, addrs in groups.items():
+        if len(addrs) != 2:
+            continue
+        a1, a2 = addrs
+        before = {a: read_x(pid, a) for a in (a1, a2)}
+        n.key(i, "d", hold=hold)
+        time.sleep(0.2)
+        after_d = {a: read_x(pid, a) for a in (a1, a2)}
+        if None in before.values() or None in after_d.values():
+            continue
+        moved_d = [a for a in (a1, a2) if abs(after_d[a] - before[a]) > min_move]
+        still_d = [a for a in (a1, a2) if abs(after_d[a] - before[a]) <= 2.0]
+        if len(moved_d) != 1 or len(still_d) != 1:
+            continue
+        p1, p2 = moved_d[0], still_d[0]
+        # the other player's key must move the OTHER record (and leave P1 alone)
+        before2 = {a: read_x(pid, a) for a in (a1, a2)}
+        n.key(i, "Right", hold=hold)
+        time.sleep(0.2)
+        after_r = {a: read_x(pid, a) for a in (a1, a2)}
+        if None in after_r.values():
+            continue
+        if abs(after_r[p2] - before2[p2]) > min_move and abs(after_r[p1] - before2[p1]) <= 2.0:
+            return {"P1": p1, "P2": p2, "type": t,
+                    "trace": {"d": {"p1": [round(before[p1], 1), round(after_d[p1], 1)],
+                                    "p2": [round(before[p2], 1), round(after_d[p2], 1)]},
+                              "Right": {"p1": [round(before2[p1], 1), round(after_r[p1], 1)],
+                                        "p2": [round(before2[p2], 1), round(after_r[p2], 1)]}}}
+    return None
+
+
+def match_state(i):
+    """'live' | 'ready' | 'menu' | 'unknown' — so entry never blindly presses keys."""
+    if find_fighters_verified(i):
+        return "live"
+    if on_ready_screen(i):
+        return "ready"
+    if menu_geometry(i, f"st{i}") is not None:
+        return "menu"
+    return "unknown"
+
+
+def ensure_match(i, attempts=3, verbose=True):
+    """Get to a *verified live* match from any state, restarting the instance if stale.
+
+    A match left alone for ~10 minutes ends its round and every fighter record freezes, so
+    "already in a match" is not the same as "usable". Only the causal test can tell.
+    """
+    for attempt in range(attempts):
+        st = match_state(i)
+        if verbose:
+            print(f"  attempt {attempt}: state={st}")
+        if st == "live":
+            return True
+        if st == "ready":
+            if enter_match(i, verbose=verbose):
+                if find_fighters_verified(i):
+                    return True
+        else:
+            if enter_ready(i):
+                if enter_match(i, verbose=verbose) and find_fighters_verified(i):
+                    return True
+        if verbose:
+            print("  restarting instance (stale round or wrong screen)")
+        n.stop_id(i)
+        n.start_ids([i])
+        t0 = time.time()
+        while time.time() - t0 < 300 and not n.window(i):
+            time.sleep(5)
+        time.sleep(12)                     # splash is ~10 s of ignored input
+    return match_state(i) == "live"
