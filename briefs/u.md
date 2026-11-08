@@ -1,5 +1,3 @@
-# Worker U — sword lifecycle (contract rows 1, 6)
-
 ## Common ground (read before acting)
 
 * `docs/INTERFACE.md` — the contract (15 rows) and its provenance rules. **Provenance admits only
@@ -9,8 +7,8 @@
   arm `+0x200`, sword `+0x400`; camera copies move 1000-2000 px per keypress and are the biggest
   movers; the heap base changes per process.
 * `scripts/qprobe.py` — **the identification to reuse**: `identify(i)` picks P1/P2 by sign +
-  walk-size + stop + sibling chain, `roles(i, p1, p2)` re-proves roles, `state(i)` reads
-  `x,y,sword`. Run `python3 qprobe.py` for its synthetic self-check.
+  walk-size + stop + sibling chain, `roles(p1, p2)` re-proves roles, `state(i)` reads
+  `x, y, sword`. Run `python3 qprobe.py` for its synthetic self-check.
 * Entry to a live match: `nidstate.enter_match_v2(i)` (~150 s). **Wait 3 s after it returns** — the
   fighters spawn high and fall. Probe within seconds: a round left alone ~10 min freezes and the
   winner walks off, which makes every "stopped" test fail.
@@ -27,29 +25,28 @@
 * Do not edit shared files (`nidstate.py`, `nidlinux.py`, `docs/`); put diffs in `results/<tag>.patch`.
 * Budget **45 minutes**. A negative with numbers is a full result.
 
+# Worker U — sword lifecycle (contract rows 1, 6)
 
 ## Goal
 
 Four distinguishable sword states: **held**, **thrown (in flight)**, **stuck in scenery**, **on the
-ground**. Row 1 (held or not) and row 6 (thrown sword = a projectile the opponent must avoid).
+ground**. Row 1 (held or not) and row 6 (the thrown sword is a projectile the opponent must avoid).
 
-Method:
-1. Enter a live match and identify the bodies. The sword is `body+0x400` and already provable: it
-   moves with the body.
-2. Find the **attack and throw keys** yourself if worker R's keymap is not in `docs/INTERFACE.md`
-   yet: sweep `f`, `g`, `h`, `j`, `k`, `l`, `space`, `w`, `q`, `e` with 0.3 s holds and watch
-   whether the sword record (a) swings with the body, (b) stops following the body, (c) disappears.
-3. For each state, record: sword `x/y` relative to the body, whether the `+0x400` record still
-   exists, and any field that changes (a state int, a velocity, a "thrown" flag).
-4. For the projectile: after a throw, search the heap for a record of a **different object type**
-   (u32@+0x88) that moves fast and then stops — that is the flying sword. Report its type value and
-   how to distinguish "in flight" from "stuck".
+1. Enter a live match, identify the bodies. The sword is `body+0x400`; it already moves with the body.
+2. Find the **attack and throw keys** yourself if worker R's keymap is not in the docs yet: sweep
+   `f`, `g`, `h`, `j`, `k`, `l`, `space`, `w`, `q`, `e` with 0.3 s holds and watch whether the sword
+   record (a) swings with the body, (b) stops following the body, (c) disappears.
+3. For each state record: sword x/y relative to the body, whether the `+0x400` record still exists,
+   and any field that changes (state int, velocity, "thrown" flag).
+4. For the projectile: after a throw, search for a record of a **different object type** (`u32@+0x88`)
+   that moves fast and then stops — that is the flying sword. Report its type value and how to tell
+   "in flight" from "stuck".
 
 ## Deliverable
 
-`results/u.json`: `{"keys": {"attack": "?", "throw": "?"},`
-`"states": {"held": {"sword_x_equals_body": true}, "thrown": {"new_type": "0x..", "speed_px_s": 0},`
-`"stuck": {"how_to_tell": "..."}, "on_ground": {"how_to_tell": "..."}},`
-`"held_flag": {"offset": "0x..", "proof": "..."}, "dead_ends": []}`
+`results/u.json`: `{"keys": {"attack": "?", "throw": "?"},
+"states": {"held": {"sword_x_equals_body": true}, "thrown": {"new_type": "0x..", "speed_px_s": 0},
+"stuck": {"how_to_tell": "..."}, "on_ground": {"how_to_tell": "..."}},
+"held_flag": {"offset": "0x..", "proof": "..."}, "dead_ends": []}`
 
 Final message: 8 lines max.
