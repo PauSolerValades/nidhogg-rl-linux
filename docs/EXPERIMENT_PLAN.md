@@ -88,3 +88,23 @@ list. Then decide wave 2 from what is still `unknown`.
 
 Nothing in wave 1 needs the Docker container; that stays a Monday task for *scaling* instances,
 not for discovery.
+
+## Wave 2 — mapping the remaining contract rows (planned 2026-11-08)
+
+Entry, identification and state read are done, so the remaining rows can be attacked in parallel.
+Grouped by **what stimulus reveals them**, because that is what makes a brief falsifiable.
+
+| worker | rows | stimulus | oracle | needs |
+|---|---|---|---|---|
+| **A — keymap & animation state** | 4 attack, 5 crouch/roll, 7 facing, 9 stun | press every plausible key once from a live match, one at a time | a field in the body record takes a **distinct value per key** and returns to idle; two passes agree | nothing extra |
+| **C — death & round** | 3 alive/dead, 10 score, 11 round phase, 12 timer | play until someone crosses the goal line | body record's fate (destroyed? x frozen? flag), plus an int that increments (score) and one that decrements (timer) | nothing extra |
+| **D — room id & tick** | 15 room/stage, 14 tick counter | let a round end (stage select → new room) | a field changing **exactly** at the transition; a monotone counter at 60 Hz | nothing extra |
+| **B — sword lifecycle** | 1 held/thrown/stuck/pickup, 6 projectile type | attack, throw, walk over the sword | sword record exists/moves/stops in four distinguishable modes; a new object type appears in flight | keymap from **A** |
+| **E — control timing** | latency, determinism, reset | hold N ticks, repeat identical runs, write x/y | ticks between key and state change; two identical runs from one reset compared | keymap from **A** |
+
+Order: **A, C, D in parallel** (independent), then **B and E** once A's keymap lands. Five workers
+at ~1.5 cores each is nothing on 384 cores; the limit is merging, so two waves of three.
+
+Shared rules for every brief: own farm (`~/.nidfarm-<tag>`), own display band, never `pkill -f`,
+never reuse an address across processes, probe within seconds of a fresh match (a round left alone
+~10 min freezes and the winner walks off), and write `results/<tag>.json` even on failure.
