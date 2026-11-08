@@ -30,6 +30,27 @@ def nearest(t, before=True):
 CH = 32 << 20
 
 
+def delta_mask_f(fa, fb, expected, mask, dtype="<f4"):
+    """Same intersection, but comparing FLOAT deltas (GameMaker stores numbers as floats/doubles,
+    so a score of +1 shows up as +1.0f, i.e. u32 0 -> 1065353216, not u32 0 -> 1)."""
+    w = 4 if dtype == "<f4" else 8
+    with open(fa, "rb") as A, open(fb, "rb") as B:
+        off = 0
+        while True:
+            ca, cb = A.read(CH), B.read(CH)
+            if not ca or not cb:
+                break
+            n = min(len(ca), len(cb)) // w * w
+            a = np.frombuffer(ca[:n], dtype).astype(np.float64)
+            b = np.frombuffer(cb[:n], dtype).astype(np.float64)
+            with np.errstate(invalid="ignore"):
+                eq = np.isclose(b - a, expected, atol=1e-3, rtol=0)
+                eq &= np.isfinite(a) & np.isfinite(b) & (np.abs(a) < 1e6)
+            sl = slice(off // w, off // w + len(eq))
+            mask[sl] &= eq
+            off += n
+
+
 def delta_mask(fa, fb, expected, mask):
     with open(fa, "rb") as A, open(fb, "rb") as B:
         off = 0
@@ -47,7 +68,9 @@ def delta_mask(fa, fb, expected, mask):
 
 
 n_slots = hs[times[0]].stat().st_size // 4
-mask = np.ones(n_slots, dtype=bool)
+FLOAT = "--float" in sys.argv
+w = 4 if FLOAT else 4
+mask = np.ones(n_slots if not FLOAT else hs[times[0]].stat().st_size // 4, dtype=bool)
 print(f"{len(times)} dumps, {n_slots} u32 slots")
 for t0, t1, exp in spec["expect"]:
     a, b = nearest(t0, True), nearest(t1, False)
@@ -55,7 +78,10 @@ for t0, t1, exp in spec["expect"]:
         print(f"  interval {t0}-{t1}: skipped (no dump pair)")
         continue
     before = int(mask.sum())
-    delta_mask(hs[a], hs[b], exp, mask)
+    if FLOAT:
+        delta_mask_f(hs[a], hs[b], float(exp), mask, "<f4")
+    else:
+        delta_mask(hs[a], hs[b], exp, mask)
     print(f"  {a:6.1f}->{b:6.1f}  expect {exp:+d}   survivors {before} -> {int(mask.sum())}")
 idx = np.nonzero(mask)[0]
 print(f"\n{len(idx)} slot(s) match every interval")

@@ -602,3 +602,44 @@ not be located in the live process afterwards (see next paragraph), so its seman
 2. **A flipping bit passes a ±1 delta test.** Four slots oscillating `30931 ↔ 30932` survived a
    single interval; they only died because the intersection demanded agreement across five intervals.
    Always use several intervals, in both directions (+1 at events, 0 between them).
+
+## Second human session (2026-11-08, markers + regions.json): clean data, no clean field yet
+
+This time the human narrated each step, so the session has **labelled intervals** (markers in
+`markers.txt`, seconds relative to the recording):
+
+```
+ 48.7  stand still            117.7  one kill              264.9  advanced 2 substages
+ 85.9  walk, no attacks       156.6  walk, no attacks      312.9  reached final stage
+215.3  P1 died, then P2 killed again                       341.7  FINAL/winner screen
+```
+
+and 60 dumps (~284 MB each, 15 regions) with **`regions.json`** so a dump offset is now mappable to
+an address. `scripts/hunt_field.py` intersects "u32 delta == X in interval I" across a spec.
+
+### Result: nothing clean
+
+* round-end spec (+1 at the boundary, 0 in three quiet intervals): 643 → 363 small-int survivors,
+  none of which reads `0…0,1`; they oscillate (`0/5/15`) or flip `0/1` throughout.
+* the same hunt in **float32** (GM numbers are floats, so +1.0 is u32 0 → 1065353216): 640
+  survivors, again all noise.
+
+So the field is *not* identifiable by pure interval intersection over a six-minute session: dozens
+of timers step by one at some point in any interval long enough to contain a round end.
+
+### What will actually pin it (next session, much smaller)
+
+1. **Two boundaries, short windows.** Ask for two round ends ~20 s apart with nothing in between;
+   a score must go `0 → 1 → 2` in those two windows and be 0 in every other interval of the same
+   length. Short same-length intervals remove the "some timer happened to step" family entirely.
+2. **Then verify live.** The game process is still running and `regions.json` maps offsets to
+   addresses: read the surviving candidates directly, and confirm the one that increments at the
+   next round end. A candidate that cannot be read live is not a finding.
+3. **Better still, sidestep the hunt:** the HUD draws `YELLOW WINS: n` / `ORANGE WINS: n`. A single
+   1-px template check per frame gives the score as ground truth, and then the memory field is found
+   by correlation instead of by elimination. That is cheaper and more honest than another 640-way
+   intersection.
+
+Everything else from tonight stands: structural event detection works, dumps are real and
+addressable, roles must be re-proved after transitions, and a flipping bit passes any single ±1
+test — so every hunt needs several intervals, in both directions.
