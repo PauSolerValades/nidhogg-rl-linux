@@ -567,3 +567,38 @@ Consequences, all of which we must keep obeying:
    even though the body pointers had gone stale.
 4. When a session needs per-player state in memory, store both addresses with their **current**
    proven role and the timestamp of that proof, and re-prove on transition rather than trusting it.
+
+## First successful memory recording of a human session (2026-11-08, second run)
+
+The recorder finally produced usable data: **386 MB of real state per dump** (26 regions incl. the
+112 MB object heap), 22 dumps over ~250 s, and **event times derived structurally** from the
+screenshots (fighter-colour presence, not motion): five `p2_gone` events at 87.1, 112.9, 138.2,
+144.2, 147.8 s and one long gap (147.8→154.6) that looks like a round boundary.
+
+### A candidate counter, found by interval intersection
+
+`scripts/hunt_field.py` intersects "slot's u32 delta equals X in interval I" across a spec of
+intervals. With `+1` at two kill intervals and `0` at two quiet intervals, a slot at **dump offset
+0x7515168** survives and reads:
+
+```
+10.1 .. 82.5 s   0
+        93.0 s   1     <- after the kill at 87.1 s
+       113.8 s   2     <- after the kill at 112.9 s
+124.2 .. 249 s   2     (the three later kills do NOT move it)
+```
+
+Because five kills only moved it twice, it is more likely **rounds won / score** than a kill count —
+which matches the macOS notes' `myroundswon`. Not proven: one observation chain, and the field could
+not be located in the live process afterwards (see next paragraph), so its semantics are inferred.
+
+### Two lessons that cost the confirmation
+
+1. **A dump OFFSET is meaningless without the region map.** The region set changed between recording
+   and re-inspection (26 regions/386 MB → 17 regions/313 MB), so offset 0x7515168 could not be
+   mapped back to an address, and the neighbourhood-signature search failed because that struct had
+   been reallocated. Fix: the recorder now writes **`regions.json`** (base + size per region) next to
+   the dumps; a second session will be locatable byte-for-byte.
+2. **A flipping bit passes a ±1 delta test.** Four slots oscillating `30931 ↔ 30932` survived a
+   single interval; they only died because the intersection demanded agreement across five intervals.
+   Always use several intervals, in both directions (+1 at events, 0 between them).

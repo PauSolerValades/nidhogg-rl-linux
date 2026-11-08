@@ -146,6 +146,11 @@ with open(csv_path, "w", newline="") as fh:
                 REGIONS.extend(ns.record_regions(pid))
                 print(f"dumping {len(REGIONS)} region(s), "
                       f"{sum(b-a for a,b in REGIONS)/1e6:.0f} MB total")
+                # the region set can change between sessions, so a dump OFFSET is only
+                # interpretable with this map. Without it, offsets are meaningless.
+                import json as _json
+                (out / "regions.json").write_text(_json.dumps(
+                    [{"base": hex(a), "size": b - a} for a, b in REGIONS], indent=1))
             path = out / "heaps" / f"{int(now*1000):08d}.bin"
             with open(path, "wb") as hf:
                 for a, b in REGIONS:
