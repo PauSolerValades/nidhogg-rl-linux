@@ -475,7 +475,32 @@ Y_OFF = 0xF0
 
 
 def biggest_heap(pid):
+    """DEPRECATED for dumping: on some prefixes the largest rw mapping is a 133 MB zero-filled
+    reservation (worker m measured this), so dumping it yields 34M zeros. Use record_regions()."""
     return max(regions(pid), key=lambda r: r[1] - r[0])
+
+
+def record_regions(pid, min_size=1 << 20):
+    """Regions worth dumping: the ones that actually CONTAIN state.
+
+    Two filters that each catch a real failure we hit: skip regions whose sampled pages are all
+    zero, and keep only regions where a 0x200-stride record has plausible coordinates (that is the
+    object heap, not a reservation).
+    """
+    out = []
+    for a, b in regions(pid):
+        if b - a < min_size:
+            continue
+        size = b - a
+        live = False
+        for off in (0, size // 2, max(0, size - 4096)):
+            pr = n.memory(pid, a + off, min(4096, size - off), "/tmp/rr_probe.bin")
+            if pr and any(pr):
+                live = True
+                break
+        if live:
+            out.append((a, b))
+    return out
 
 
 def fighter_records(pid, heap=None):

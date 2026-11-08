@@ -110,6 +110,7 @@ def tick(pid0=None):
 
 
 TICK = None
+REGIONS = []
 csv_path = out / "states.csv"
 with open(csv_path, "w", newline="") as fh:
     w = csv.writer(fh)
@@ -141,7 +142,17 @@ with open(csv_path, "w", newline="") as fh:
             ns.grab(i, str(out / "shots" / f"{int(now*1000):08d}.png"))
         if now - last_heap > heap_every:
             last_heap = now
-            a, b = ns.biggest_heap(pid)
-            ns.n.memory(pid, a, b - a, str(out / "heaps" / f"{int(now*1000):08d}.bin"))
+            if not REGIONS:
+                REGIONS.extend(ns.record_regions(pid))
+                print(f"dumping {len(REGIONS)} region(s), "
+                      f"{sum(b-a for a,b in REGIONS)/1e6:.0f} MB total")
+            path = out / "heaps" / f"{int(now*1000):08d}.bin"
+            with open(path, "wb") as hf:
+                for a, b in REGIONS:
+                    blob = ns.n.memory(pid, a, b - a, "/tmp/rec_h.bin")
+                    hf.write(blob or b"")
+            nz = sum(1 for _ in [0])  # placeholder
+            if path.stat().st_size == 0:
+                print("  dump failed (0 bytes)")
         time.sleep(0.05)
 print(f"done: {csv_path}")
