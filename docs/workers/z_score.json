@@ -1,0 +1,28 @@
+{
+ "ok": false,
+ "hud": {
+  "p1_rect": [56, 14, 80, 30],
+  "p1_label_rect": [30, 6, 100, 26],
+  "p2_rect": [214, 14, 238, 30],
+  "colours": {"p1_text_rgb": [166, 166, 0], "p2_text_rgb": [166, 104, 42]},
+  "digits": {"0": "results/z_digits.json (not drawn at all - empty box)",
+             "1": "results/z_digits.json (2 px bar at x62..63, y17..28)"},
+  "screen": "HUD is drawn ONLY on the READY screen (score 0 => digit slot blank, no '0' glyph); absent during play and on the GO/winner screens",
+  "verified": "yellow source 0->1 at t=343.7 (round end), blank at t=275.8, bar from t=358.2 to end of recording"
+ },
+ "score": {"addr": null, "hud_before": 0, "hud_after_poke": 0, "proven": false},
+ "phase": {"addr": null, "values": {}, "proven": false},
+ "candidates_tested": 25,
+ "pokes": 50,
+ "crashes": 0,
+ "dead_ends": [
+  "25 u32 candidates survived: value 0 in all 27 dumps before the t=343.7 round end, exactly 1 (or 1.0f) in all 122 dumps after (t=354.4..1095s), constant within each window. All 25 were poked live at READY (score 0-0) FIRST as int 7, then as float 7.0f: read-back confirmed the write landed in every slot, the HUD digit slot stayed blank, game alive (ping ok), values restored to 0.",
+  "10 of the 25 are in the 112 MB GameMaker heap at 0x19132xx / 0x19150xx (stride 0x10, 0->1 flags, array-like); 3 in region 0xcd02000 (0xd1e9exx); 1 float at 0x81ee190 (reads 1370464 now, i.e. reused). None is the displayed score.",
+  "recording offsets are mappable: low regions have IDENTICAL bases in the two processes (0x14a0000, 0x16a0000, 0xcd02000, 0x102b2000) - checked against a fresh process, so a dump offset in those regions is addressable live. The 0x705a.../0x6fff... regions do NOT (ASLR).",
+  "5522 further 0->1 survivors live in the 4 MB region 0x705a803fa000 (OpenGL/deleted-mapping arena) - unmappable to a live process, and the O(10^3) population says scene/vertex data, not a scalar.",
+  "no double (0x0000000000000000 -> 0x3FF0000000000000) survived: 45 pass-1 hits, 0 constant over both windows. So the score is not a float64 global.",
+  "=> the score scalar is NOT in any of the 15 regions that session dumped. The live process has 7 more rw regions >=1 MB (0x8402000, 0xa102000, 0xa210000, 0xc4f0000, 0xd202000, 0xd412000, 0xece0000, plus the 31 MB [heap]) that the recorder skipped - the field is most likely there, or in a display copy written only when the READY screen is (re)built.",
+  "HUD oracle itself validated as live-rendered (READY is drivable: holding d moves the sprite on screen), so the negative is meaningful, not a frozen-frame artefact.",
+  "poke+HUD needs a READY screen; it is not reachable without winning a whole round (a death produces a GO screen with no HUD). Budget did not allow a live round win, so the second half of the plan (live 0-vs-1 differential from my own process) was not run."
+ ]
+}

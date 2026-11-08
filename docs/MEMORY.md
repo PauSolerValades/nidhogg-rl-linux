@@ -643,3 +643,31 @@ of timers step by one at some point in any interval long enough to contain a rou
 Everything else from tonight stands: structural event detection works, dumps are real and
 addressable, roles must be re-proved after transitions, and a flipping bit passes any single ±1
 test — so every hunt needs several intervals, in both directions.
+
+## Worker Z — the score hunt is now bounded, not blind
+
+The poke+HUD oracle was built and it works; the field simply is not in the memory we recorded.
+
+**The HUD.** `YELLOW WINS:` / `ORANGE WINS:` are drawn **only on the READY screen** (not during a
+round, not on the GO/winner screens). Digit rectangles measured: P1 `[56,14,80,30]`, P2
+`[214,14,238,30]`; text colours `(166,166,0)` / `(166,104,42)`. A score of **0 draws nothing at
+all**, and 1 draws a 2 px bar at `x 62..63, y 17..28`. Verified live: yellow went blank → bar at
+t=343.7 s, exactly the human's marked round end, and stayed a bar to the end of the recording.
+
+**The elimination.** Interval analysis over the marked windows left **25 u32 candidates** with
+exactly the right signature (0 in all 27 pre-boundary dumps, 1 in all 122 post-boundary dumps,
+constant within each window — and no float64 candidate at all, so the score is not a double global).
+Each was then **poked live at READY as int 7 and as float 7.0**: read-back confirmed every write
+landed, the HUD digit stayed blank, the game stayed alive, values restored. **None is the score.**
+
+**Why that is a useful negative:** the session dumped 15 regions; the live process has **7 more
+rw regions ≥1 MB** (`0x8402000`, `0xa102000`, `0xa210000`, `0xc4f0000`, `0xd202000`, `0xd412000`,
+`0xece0000`, plus the 31 MB `[heap]`) that the recorder skipped. The score is most likely in one of
+them, or in a display copy written only when the READY screen is rebuilt. That is the next hunt, and
+it is a small, enumerated one — not a 600-way intersection.
+
+**A bonus fact with legs:** low-address regions have **identical bases across processes**
+(`0x14a0000`, `0x16a0000`, `0xcd02000`, `0x102b2000` all matched a fresh process), while high ones
+(`0x705a…`, `0x6fff…`) are ASLR'd. So a dump offset inside a low region is addressable live; inside
+a high region it is not. That is exactly what a worker needs to convert a recording into a live
+experiment.
