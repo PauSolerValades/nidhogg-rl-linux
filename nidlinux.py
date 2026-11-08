@@ -51,8 +51,13 @@ def _pids():
 
 
 def _ensure_display(disp, size="640x480x24"):
-    """Every instance gets its own Xvfb: no window is ever visible."""
+    """Every instance gets its own Xvfb — unless a server (e.g. Xtigervnc) already owns it."""
     if subprocess.run(["pgrep", "-f", f"Xvfb {disp} "], capture_output=True).returncode == 0:
+        return
+    # an Xtigervnc (or any) server may already be serving this display: never fight it
+    if subprocess.run(["xdotool", "getdisplaygeometry"],
+                      env=dict(os.environ, DISPLAY=disp),
+                      capture_output=True).returncode == 0:
         return
     subprocess.Popen(["Xvfb", disp, "-screen", "0", size, "-nolisten", "tcp"],
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
