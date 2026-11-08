@@ -22,18 +22,38 @@ def frame(p):
     return np.frombuffer(raw, np.uint8)
 
 
-def events(shots, thresh=18.0):
-    """Screenshot-to-screenshot change magnitude -> (time_s, magnitude, path_before, path_after)."""
+def events(shots, min_px=30, settle=1.0):
+    """Event times from STRUCTURE, not motion: are both fighters drawn?
+
+    Camera scroll makes frame-to-frame motion useless as an event detector (55 of 127 frames
+    "changed" during ordinary walking). Presence does not lie:
+        orange vanishes, yellow stays -> P2 died
+        yellow vanishes, orange stays -> P1 died
+        neither present               -> a UI screen (stage select / menus)
+    Returns [(time_s, kind)] where kind is one of p2_gone / p1_gone / ui / resume.
+    """
     files = sorted(shots.glob("*.png"))
+    state = {}
     out = []
-    prev = None
+    last = None
     for f in files:
-        cur = frame(f)
-        if prev is not None and cur.size == prev[1].size:
-            mag = float(np.abs(cur.astype(int) - prev[1].astype(int)).mean())
-            if mag > thresh:
-                out.append((int(f.stem) / 1000.0, mag, prev[0], f))
-        prev = (f, cur)
+        raw = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-i", str(f),
+                              "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                             capture_output=True).stdout
+        a = np.frombuffer(raw, np.uint8)
+        if not a.size:
+            continue
+        a = a.reshape(-1, 3).astype(int)
+        r, g, b = a[:, 0], a[:, 1], a[:, 2]
+        y = int(((r > 240) & (g > 240) & (b < 80)).sum())
+        o = int(((r > 240) & (g > 105) & (g < 205) & (b < 115)).sum())
+        t = int(f.stem) / 1000.0
+        cur = "both" if (y > min_px and o > min_px) else (
+            "none" if y + o < min_px else ("p1" if y > min_px else "p2"))
+        if last is not None and cur != last[0] and t - last[1] > settle * 0.5:
+            kind = {"p2": "p2_gone", "p1": "p1_gone", "none": "ui", "both": "resume"}.get(cur, cur)
+            out.append((t, kind))
+        last = (cur, t)
     return out
 
 
