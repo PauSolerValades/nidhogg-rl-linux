@@ -360,3 +360,25 @@ in `MULTIPLAYER → LOCAL → READY`. That is user state (10): two fighters on t
 walls; standing on the pad requires closed-loop positioning (pads are wide coloured bars near the
 ground row, and overshooting is easy at 60 fps). Also unconfirmed whether stepping up needs a jump
 press or merely standing on the pad — that is a question for the human player, not for pixels.
+
+## The READY pads, measured (wall-relative geometry)
+
+The human player's description was the key: the wall divides the screen, and each pad sits in the
+middle of its own half. Measured on-screen at 320 px width:
+
+* wall: a 32 px light-grey vertical band at x ≈ 160 (detected by "column is >60 % light grey in
+  the upper half") — a robust landmark because it moves with the camera;
+* **pads at wall ± 0.32·W ≈ ±102 px**, not ±W/4: a quarter-screen leaves both fighters standing a
+  couple of dozen pixels *beside* their pad, which is what three attempts died on;
+* pad and fighter share the same colours (yellow pad `(254,254,9)` vs fighter `(255,255,0)`;
+  orange pad `(252,160,66)` vs fighter `(255,160,64)`), so pads cannot be separated by colour —
+  geometry is the only way.
+
+`scripts/wall_walk.py` walks each fighter to wall ∓ 0.32·W using its colour blob as feedback, then
+stands still 2.5 s. Result: **the game advances past READY into a match** (screen shows the round
+with the big orange "GO" arrow and both fighters; `on_ready_screen` goes False).
+
+Known limitation: the camera follows the moving player, so walking one fighter can push the other
+out of view (`orange: fighter not visible`). The robust fix is to walk in **room-space using
+`x@+0xEC`** instead of screen pixels — which needs the fighter records that `find_fighters` is
+currently failing to find in a fresh farm (worker `v` is on it).
