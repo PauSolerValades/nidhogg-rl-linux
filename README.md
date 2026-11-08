@@ -1,96 +1,66 @@
 # nidhogg-rl
 
-An agent that learns to play **the real, locally installed copy of Nidhogg** — not a
-simulator. It reads the game's state out of process memory (no computer vision) and drives
-it with injected keystrokes, so the candidate policy is always playing the actual game.
+Train an RL agent on the **real, installed Nidhogg** — headless, in parallel, on a Linux server —
+without modifying gameplay code. The Windows build (GameMaker YYC) runs under Proton; state comes
+out of process memory, actions go in as key presses.
 
-**Status: not yet beating the CPU.** The plumbing works end to end (it enters a Training
-match against the CPU, plays it, scores it, evolves, and repeats). The learned policy does
-not yet win rounds. Every number in this repo is measured; see `docs/STATE.md` for what is
-verified, and `docs/EXPERIMENTS.md` for what was tried and abandoned.
+> **Start with [`docs/TMP_CURRENT_STATE.md`](docs/TMP_CURRENT_STATE.md)** — what is proven, where it
+> lives, what is missing. Then [`docs/LAYOUT.md`](docs/LAYOUT.md) (memory map) and
+> [`docs/MEMORY.md`](docs/MEMORY.md) (lab notebook, including every trap).
 
----
+## Status in one line
 
-## How it works
+The observation interface is proven (both fighters' `x,y`, facing, animation, sword, a 60 Hz tick,
+and the ORANGE wins counter), writes are kept so episode resets are viable, and **round phase is the
+last missing field**.
 
-```
-┌────────────────────────┐         ┌───────────────────────────┐
-│ Nidhogg (real binary)  │         │ Python trainer            │
-│  hook/inject.dylib     │         │  train_win.py             │
-│   ├ reads fighter x/y  │──state──▶  ├ observation: 8 numbers  │
-│   ├ injects keys       │◀─keys────  ├ policy: neuro.py (935 w)│
-│   └ parks window 2 px  │  files    ├ fitness → GA            │
-└────────────────────────┘         └───────────────────────────┘
-```
-
-State and commands are plain files in `/tmp` (`nid_state_<id>.txt`, `nid_keys_<id>.txt`, …),
-so the Python side needs no IPC and the game side never blocks.
-
-| File | Role |
-|---|---|
-| `hook/inject.m`, `hook/hook.s` | Injected dylib: memory reads, key injection, window hiding, mute |
-| `train_state.py` | Launches the game, enters a Training match, reads state, sends keys |
-| `neuro.py` | 8→32→16→7 network (tanh), GA, and hand-written seed policies |
-| `train_win.py` | Episode loop, reward, generational training |
-| `evaluate.py` | Win-rate measurement (the only number that counts) |
-| `agent_play.py` + `play_vs_agent.sh` | Human vs. trained agent |
-| `train_forever.sh` | Unattended train → evaluate → repeat loop |
-| `NOTES.md` | Lab notebook: every experiment, including the failures |
-
-## Running it
+## Quickstart
 
 ```bash
-uv venv .venv && source .venv/bin/activate      # Python 3.12
-uv pip install numpy matplotlib pyobjc
+./scripts/server-runtime.sh                 # user-level Xvfb + xdotool (no sudo)
+. ~/nidhogg-rl-install/results/env.sh       # NID_PROTON, PATH, LD_LIBRARY_PATH
+./scripts/install-server.sh                 # Proton-GE + game copy + wine prefix template
 
-clang -dynamiclib -fobjc-arc -O1 -arch arm64 \
-  -framework Cocoa -framework OpenGL -framework CoreVideo \
-  -o hook/inject.dylib hook/inject.m hook/hook.s
-codesign --force -s - hook/inject.dylib
-
-python3 train_win.py --instances 1 --gens 60 --pop 10 --window 60
+python3 -c "import nidlinux as n; n.start_ids([0])"            # launch one instance
+python3 -c "import nidstate as s; print(s.enter_match_v2(0))"   # menu -> pads -> live match (~58 s)
 ```
 
-Requirements and constraints baked into the code:
+Human playable (VNC in a browser, no client needed):
 
-* Nidhogg installed through Steam (path configured in `train_state.py`).
-* **Nothing appears on screen.** The game window is resized to a 2-pixel hairline parked at
-  the screen edge; no focus stealing, no fullscreen, no dialogs.
-* **The game is muted, never the Mac.** `prefs_locked.ini` is restored before every launch
-  (audio zeroed, language forced to English).
-* **At most two game processes.** `launch()` kills leftovers first; Steam's re-exec chain is
-  the reason this needs enforcing.
+```bash
+./scripts/vnc_play.sh                       # then: ssh -L 6080:localhost:6080 <you>@<host>
+                                            #       http://localhost:6080/vnc.html
+```
 
-## Design decisions worth knowing
+Record a session and mine it:
 
-* **Memory, not vision.** Reading `CInstance` x/y out of the process at ~40 Hz is exact and
-  needs no permissions. `legacy/` contains the abandoned screen-capture approach.
-* **The Training menu, not `room_goto`.** Jumping rooms directly produces a match with an
-  *inert* CPU; the menu path produces one that actually plays. The entry is
-  `13, W, 13, S, S, 13, 13, 13` — **two** S presses select TRAINING, one selects the
-  2-player ARCADE room, which waits forever for a second human.
-* **Entry is verified by CPU motion**, not by the fighter's y: a live training match and the
-  ARCADE waiting room both show fighters at y≈128.
-* **A Training match is one round.** Re-entry per episode is required; accepting into the
-  next round does not work.
-* **Speed is raised only after entry.** At speed 180 the game runs ~47 fps, but the menu
-  timing is calibrated at the default ~24 fps, so raising it earlier makes entry overshoot.
+```bash
+python3 scripts/record_all.py 0 --p1 0x<addr> --p2 0x<addr>     # states, shots, full heap dumps
+python3 scripts/mine_session.py ~/nidhogg-record/<stamp>        # structural events (kills, round end)
+python3 scripts/hunt_field.py  ~/nidhogg-record/<stamp> spec.json [--float]   # field hunt
+```
 
-## What has been measured
-
-Short version; details and dates in `docs/STATE.md`.
-
-* Keyboard control works: holding a direction moves the fighter at ~12 px/s.
-* Strikes only land at horizontal distance **≤ 22 px** (at 59 px they miss entirely).
-* Running alone does **not** win: holding right for 120 s gains ~366 px and is then pushed
-  back to the start — the CPU has to be beaten, not outrun.
-* Training matches are one round; the CPU wins by crossing the goal line at x=250.
-
-## Repo layout
+## Layout
 
 ```
-hook/          injected dylib (state reader, key injector, window handling)
-docs/          STATE.md (verified facts) and EXPERIMENTS.md (what failed and why)
-legacy/        abandoned approaches, kept for the record (incl. a banned simulator)
-NOTES.md       chronological lab notebook
+nidlinux.py        launch/stop instances, keys, screenshots, spy protocol
+nidstate.py        measurement library: entry, identification, oracles, field readers
+spy/nidspy.c       in-process memory reader/writer (~90 lines; /proc/<pid>/mem is refused here)
+scripts/           runtime install, VNC play, recorders, mining, load test
+briefs/            worker briefs (headless pi agents, one falsifiable target each)
+docs/               TMP_CURRENT_STATE, LAYOUT, MEMORY, OVERVIEW, INTERFACE, workers/, archive/
+docs/archive/       the macOS era: NOTES_macos.md, STATE_macos.md, EXPERIMENTS_macos.md
+docker/             per-instance image (written, builds when the host grants docker access)
 ```
+
+## Rules that cost a session each
+
+* **Never `pkill -f`** — it matches your own command line (it has killed a worker and the
+  supervisor shell). Use `pkill -x`, or match `/proc/<pid>/environ`.
+* **Never probe while a human plays** — identification presses `d/a/arrows`.
+* **Identify early in a match** — identification decays as a session runs.
+* **A dump offset is meaningless without `regions.json`**; low regions keep their bases across
+  processes, high ones are ASLR'd.
+* **Measure the measurement** — a per-screenshot fps loop reports 1 fps on a 60 fps game.
+
+The full list, with what each one broke, is in `docs/TMP_CURRENT_STATE.md` §6.

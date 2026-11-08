@@ -671,3 +671,15 @@ it is a small, enumerated one — not a 600-way intersection.
 (`0x705a…`, `0x6fff…`) are ASLR'd. So a dump offset inside a low region is addressable live; inside
 a high region it is not. That is exactly what a worker needs to convert a recording into a live
 experiment.
+
+## Repo cleanup (2026-11-09)
+
+The macOS machinery is gone: `hook/` (dylib injection), `legacy/`, the Mac harness
+(`train_state.py`, `train_win.py`, `neuro.py`, `nav.py`, `agent*.py`, `evaluate.py`, `video_*.py`),
+the Mac shell wrappers, the `prefs_*.ini` files, my early Linux experiments (`hunt_live.py`,
+`pokehunt.py`, `hunt_paused.py`, `findstate.py`, `farm.sh`) and ten stray debug PNGs at the repo
+root. Nothing current referenced any of it.
+
+The **knowledge** was kept: `docs/archive/NOTES_macos.md` (109 KB lab notebook), `STATE_macos.md`,
+`EXPERIMENTS_macos.md`. `README.md` was rewritten for the Linux/server project, and `OVERVIEW.md` +
+`NEXT_STEPS.md` are marked historical so they cannot be mistaken for current instructions.

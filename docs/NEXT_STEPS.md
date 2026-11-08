@@ -1,3 +1,6 @@
+> **Historical**: macOS-era plan. Current state and next steps:
+> [TMP_CURRENT_STATE.md](TMP_CURRENT_STATE.md) §7.
+
 # Next steps — from proof of concept to a training interface
 
 Read `docs/OVERVIEW.md` first (what exists and why), then this.

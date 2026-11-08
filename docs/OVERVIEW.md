@@ -1,3 +1,6 @@
+> **Historical**: this describes the macOS era. For the current Linux/server state see
+> [TMP_CURRENT_STATE.md](TMP_CURRENT_STATE.md).
+
 # Nidhogg RL — what we are doing and what we can do
 
 This is the structured view. `docs/MEMORY.md` is the lab notebook (chronological, including
