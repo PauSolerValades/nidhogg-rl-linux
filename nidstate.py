@@ -1068,3 +1068,76 @@ def find_players_by_input(i, hold=0.6, min_move=15.0):
                             "to": round(d_moves[0][4], 1)},
                       "Right": {"addr": p2, "from": round(r_moves[0][3], 1),
                                 "to": round(r_moves[0][4], 1)}}}
+
+
+# ---------------------------------------------------------------- measured pad trigger (worker p)
+#
+# Swept on 4 parallel instances, verified on 2 fresh ones:
+#   firing band      d = 0.28 .. 0.42 W      (0.28, 0.30, 0.333, 0.36, 0.38, 0.42 all fired)
+#   best             d = 0.333 W             (repeat 2.74 s / 2.69 s)
+#   dead inner zone  d = 0.267 W             (32 s, never fired — the inner third of each pad)
+#   outside          d >= 0.44 W
+#   stage select appears ~1.5-2.7 s after the last movement key
+# The painted pads are at wall ∓ 0.33 W (yellow bar 24..85 px, orange 243..295 px on 320 W).
+# The "widest colour run" pad detector is contaminated by the fighter standing on the pad — it
+# reported a 100 px bar — which is what made 0.32 W look unreliable for a whole afternoon.
+
+PAD_OFFSET_FRAC = 0.333
+PAD_OFFSET_BAND = (0.28, 0.42)
+
+
+def in_match(i, name="im"):
+    """A live match: no menu, no READY wall, and pressing keys moves exactly one record each.
+
+    Drivability alone is NOT enough — READY is drivable and so are the pause/OPTIONS screens.
+    The wall is the discriminator: it exists only on READY.
+    """
+    if menu_geometry(i, name + "m") is not None:
+        return False
+    if _wall_x(i, name + "w") is not None:
+        return False
+    return bool(find_players_by_input(i, hold=0.4))
+
+
+def enter_match_v2(i, verbose=True, stand=1.6, tries=2):
+    """The measured recipe. Returns True only for a verified live match.
+
+    READY -> park both at wall ∓ 0.333 W -> hold ~1.5 s -> stage select -> Return -> match.
+    """
+    for attempt in range(tries):
+        if not enter_ready(i):
+            if verbose:
+                print("  not on READY")
+            return False
+        if in_match(i):                      # already live
+            return True
+        wx = _wall_x(i, "v2w")
+        if wx is None:
+            if verbose:
+                print("  wall missing")
+            return False
+        off = PAD_OFFSET_FRAC * frame(i, "v2g").shape[1]
+        ok1 = _walk_to_x(i, "yellow", wx - off)
+        ok2 = _walk_to_x(i, "orange", wx + off)
+        if verbose:
+            print(f"  parked at wall ∓{PAD_OFFSET_FRAC:.3f}W (yellow={ok1} orange={ok2}); holding")
+        t0 = time.time()
+        fired = False
+        while time.time() - t0 < stand + 1.8:
+            if on_stage_select(i, f"v2s{attempt}"):
+                fired = True
+                if verbose:
+                    print(f"  stage select after {time.time()-t0:.1f}s")
+                break
+            time.sleep(0.3)
+        if not fired:
+            if verbose:
+                print(f"  attempt {attempt}: no stage select")
+            continue
+        n.key(i, "Return", hold=0.12)
+        time.sleep(3.0)                       # spawn + fall
+        if in_match(i):
+            return True
+        if verbose:
+            print("  stage select accepted but not a live match yet")
+    return False
