@@ -428,3 +428,21 @@ It runs in ~6 s (2 dumps, cached regions). Also measured:
 * a fresh match spawns the fighters **high up and they fall**, and a finished round teleports them
   (traces ending at the same x ~1943), so probes must run in the first seconds after `GO` and the
   round state must be part of the check.
+
+## Two environment facts that invalidate hardcoded anything
+
+1. **The heap base changes per process.** Earlier instances kept their records at `0x16a0000`; a
+   freshly launched one has them around `0x74c0…` (ASLR). Every address we ever wrote down is valid
+   only for the process it came from — which is exactly why identification must be behavioural
+   (press a key, watch a record) and why `_all_record_xs` scans regions instead of trusting a base.
+2. **Stale instances pile up on this box.** At one point four `Nidhogg.exe` processes were alive
+   (`:41`, `:60`, `:220` from earlier runs, plus one belonging to another user whose
+   `/proc/<pid>/environ` is unreadable). `pid_of()` matches on the DISPLAY variable, so a leftover
+   game on the same display silently becomes "the" instance — and its records do not match the
+   window you are looking at. **Rule: kill our own displays before every experiment**
+   (`clean_farm()` does this for the current farm; cross-farm leftovers still need a sweep).
+
+Also fixed in this round: `find_players_by_input` now requires the record to move **and stop**
+(`d_hold >= 12 px`, `d_free <= 2.5 px`). Without the stop half, the attract demo's own AI satisfies
+"a record moved while I held d" — which is how `ensure_match` returned True in 7 s on the title
+screen.

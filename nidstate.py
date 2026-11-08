@@ -984,18 +984,26 @@ def find_players_by_input(i, hold=0.6, min_move=15.0):
         return None
 
     def moved(key, exclude=()):
+        """Records that move WHILE the key is held and STOP when it is released.
+
+        The stop half is not optional: the attract demo's AI walks fighters by itself, so
+        "a record moved while I held d" is also true on the title screen. This is the check
+        that separates control from coincidence.
+        """
         before = {a: v[0] for a, v in base.items() if a not in exclude}
         n.key(i, key, hold=hold)
-        time.sleep(0.25)
+        during = _all_record_xs(pid)
+        time.sleep(0.35)
         after = _all_record_xs(pid)
         deltas = []
         for a, x0 in before.items():
-            if a in after:
-                d = after[a][0] - x0
-                if abs(d) >= min_move:
-                    deltas.append((abs(d), a, d, x0, after[a][0]))
+            if a not in during or a not in after:
+                continue
+            d_hold = during[a][0] - x0
+            d_free = after[a][0] - during[a][0]
+            if abs(d_hold) >= min_move and abs(d_free) <= 2.5:
+                deltas.append((abs(d_hold), a, d_hold, x0, during[a][0]))
         deltas.sort(reverse=True)
-        # the fighter is the largest clean mover; duplicates of it sit at the same delta
         return deltas
 
     d_moves = moved("d")
