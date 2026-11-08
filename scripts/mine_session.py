@@ -48,8 +48,9 @@ def events(shots, min_px=30, settle=1.0):
         y = int(((r > 240) & (g > 240) & (b < 80)).sum())
         o = int(((r > 240) & (g > 105) & (g < 205) & (b < 115)).sum())
         t = int(f.stem) / 1000.0
+        # name what is MISSING: only yellow drawn => the orange player is gone
         cur = "both" if (y > min_px and o > min_px) else (
-            "none" if y + o < min_px else ("p1" if y > min_px else "p2"))
+            "none" if y + o < min_px else ("p2" if y > min_px else "p1"))
         if last is not None and cur != last[0] and t - last[1] > settle * 0.5:
             kind = {"p2": "p2_gone", "p1": "p1_gone", "none": "ui", "both": "resume"}.get(cur, cur)
             out.append((t, kind))
