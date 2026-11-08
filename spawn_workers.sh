@@ -24,7 +24,7 @@ spawn() {  # $1=tag $2=display_base $3=farm
   fi
   echo "[spawn] $tag: farm=$farm display=:$disp worktree=$wt"
   ( cd "$wt" && \
-    NIDFARM="$farm" NID_DISPLAY_BASE="$disp" NIDTAG="$tag" \
+    NIDFARM="$farm" NID_DISPLAY_BASE="$disp" NIDTAG="$tag" NID_GAME_DIR="$farm/game" \
     NIDART="/tmp/nidart-$tag" \
     timeout "$BUDGET" pi --print --no-session --model "${NID_MODEL:-deepseek-flash}" \
       --tools bash,read,write,edit \
@@ -32,6 +32,10 @@ spawn() {  # $1=tag $2=display_base $3=farm
       > "$REPO/logs/worker_$tag.log" 2>&1 ; \
     echo "[worker $tag] exit $?" >> "$REPO/logs/worker_$tag.log" ) &
 }
+
+# Runtime env: Proton, xdotool and the mesa libs (path from the install worktree).
+ENVSH="${NID_ENVSH:-$HOME/nidhogg-rl-install/results/env.sh}"
+if [ -f "$ENVSH" ]; then . "$ENVSH"; echo "[spawn] runtime env: $ENVSH"; else echo "[spawn] WARNING: no $ENVSH"; fi
 
 TAGS="${*:-a b c}"
 pkill -x 'Nidhogg.exe' 2>/dev/null; sleep 2
