@@ -29,8 +29,8 @@ def events(shots, thresh=18.0):
     prev = None
     for f in files:
         cur = frame(f)
-        if prev is not None and cur.size == prev.size:
-            mag = float(np.abs(cur.astype(int) - prev[1]).mean())
+        if prev is not None and cur.size == prev[1].size:
+            mag = float(np.abs(cur.astype(int) - prev[1].astype(int)).mean())
             if mag > thresh:
                 out.append((int(f.stem) / 1000.0, mag, prev[0], f))
         prev = (f, cur)
