@@ -752,14 +752,19 @@ def on_ready_screen(i):
     return pad_and_fighter(i, "yellow", "rd1") is not None
 
 
-def enter_ready(i, tries=6, wait=1.0):
-    """From the title, land on READY (multiplayer local). Return x3 with retries."""
-    for attempt in range(tries):
-        if on_ready_screen(i):
+def enter_ready(i, tries=8, wait=1.0):
+    """Press Return until fighters are on screen (READY, or a match).
+
+    Deliberately does NOT use pad detection: a fighter standing on its pad *is* the pad's colour,
+    so pads vanish exactly when the walk succeeds — which made the old check report failure at the
+    moment of success (and "advanced" when nothing had happened).
+    """
+    for _ in range(tries):
+        if _fighters_visible(i, "er"):
             return True
         n.key(i, "Return", hold=0.12)
         time.sleep(wait)
-    return on_ready_screen(i)
+    return _fighters_visible(i, "er_end")
 
 
 def walk_onto_pad(i, which, tol=7, max_steps=30):
@@ -815,42 +820,82 @@ def _walk_to_x(i, which, target, tol=8, max_steps=30):
     return False
 
 
-def enter_match(i, verbose=True, wait_land=2.5):
-    """READY -> both fighters onto their pads -> match, verified by input (not by pixels).
-
-    The pads sit 0.32*W from the central wall (measured; a quarter-screen leaves the fighters
-    standing beside them). Verification is `find_players_by_input`, because "the pads disappeared"
-    is a false signal — the fighter covers its own pad.
-    """
-    if not enter_ready(i):
-        if verbose:
-            print("  could not reach READY")
+def _fighters_visible(i, name="fv"):
+    """Are both fighters drawn? (the stage-select preview draws none.)"""
+    a = frame(i, name)
+    if a is None:
         return False
-    wx = _wall_x(i)
-    if wx is not None:
-        a = frame(i, "geom")
-        off = 0.32 * a.shape[1]
+    h = a.shape[0]
+    counts = []
+    for which in ("yellow", "orange"):
+        m = _mask(a, which)
+        m[int(h * 0.62):, :] = False
+        counts.append(int(m.sum()))
+    return counts[0] > 20 and counts[1] > 20
+
+
+def _pads_visible(i, name="pv"):
+    return (pad_and_fighter(i, "yellow", name + "y") is not None or
+            pad_and_fighter(i, "orange", name + "o") is not None)
+
+
+def on_stage_select(i, name="ss"):
+    return not _pads_visible(i, name) and not _fighters_visible(i, name)
+
+
+def enter_match(i, verbose=True, stand=1.6, tries=3):
+    """READY -> BOTH fighters on their pads -> ~1.5 s -> stage select -> match.
+
+    Confirmed by the player who wrote the state machine, and by a controlled test here: ONE
+    fighter on its pad does nothing (the game waits on READY indefinitely). Both must stand on
+    their pads for ~1.5 s; then an audio cue plays, the floor chandeliers light up and stage
+    select appears. A single-pad run only ever looked like success because the other fighter
+    happened to be inside its pad's trigger zone already.
+
+    Returns True only when a live match is verified by input.
+    """
+    for attempt in range(tries):
+        if not enter_ready(i):
+            if verbose:
+                print("  could not reach READY")
+            return False
+        wx = _wall_x(i)
+        if wx is None:
+            if verbose:
+                print("  wall not found on READY")
+            return False
+        off = 0.32 * frame(i, "geom").shape[1]
+        if find_players_by_input(i, hold=0.4):
+            return True                        # already in a live match
         ok1 = _walk_to_x(i, "yellow", wx - off)
         ok2 = _walk_to_x(i, "orange", wx + off)
-    else:
-        ok1 = walk_onto_pad(i, "yellow")
-        ok2 = walk_onto_pad(i, "orange")
-    if verbose:
-        print(f"  walked onto pads: yellow={ok1} orange={ok2}; standing 2.5 s")
-    time.sleep(2.5)
-    for attempt in range(3):
-        time.sleep(wait_land)                 # fighters spawn high and FALL: let them land
-        players = find_players_by_input(i, hold=0.5)
-        if players:
+        if verbose:
+            print(f"  pads: yellow={ok1} orange={ok2}; standing {stand}s")
+        if not (ok1 and ok2):
             if verbose:
-                print(f"  match live: P1={players['P1']:#x} "
-                      f"P2={players['P2']:#x}" if players.get("P2") else "  P1 only")
+                print(f"  attempt {attempt}: a walk failed, retrying")
+            time.sleep(0.5)
+            continue
+        t0 = time.time()
+        seen = False
+        while time.time() - t0 < stand + 1.5:
+            if on_stage_select(i, f"ss{attempt}"):
+                seen = True
+                if verbose:
+                    print(f"  stage select after {time.time()-t0:.1f}s")
+                break
+            time.sleep(0.3)
+        if not seen:
+            if verbose:
+                print(f"  attempt {attempt}: no stage select "
+                      f"(pads={_pads_visible(i)}, fighters={_fighters_visible(i)})")
+            continue
+        n.key(i, "Return", hold=0.12)
+        time.sleep(2.5)                     # fighters spawn high and fall
+        if find_players_by_input(i, hold=0.5):
             return True
         if verbose:
-            print(f"  attempt {attempt}: not drivable yet; nudging")
-        n.key(i, "Return", hold=0.12)          # may still be on READY
-        time.sleep(0.8)
-        _walk_to_x(i, "yellow", wx - 0.32 * 320) if wx else None
+            print("  stage accepted but players not controllable yet")
     return False
 
 
