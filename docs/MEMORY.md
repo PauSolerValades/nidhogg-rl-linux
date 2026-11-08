@@ -446,3 +446,38 @@ Also fixed in this round: `find_players_by_input` now requires the record to mov
 (`d_hold >= 12 px`, `d_free <= 2.5 px`). Without the stop half, the attract demo's own AI satisfies
 "a record moved while I held d" — which is how `ensure_match` returned True in 7 s on the title
 screen.
+
+## End-to-end entry confirmed by eye (server, 320×200)
+
+```
+title --Return--> MENU --Return--> MULTIPLAYER --Return--> LOCAL(READY)
+READY: walk yellow to wall-0.32W (59 px, target 57); orange was already inside its pad zone
+stage select appears ("castle") --Return--> LIVE MATCH (both fighters, castle room)
+```
+
+Three presses, one pad walk, one confirm. The stage-select screen appears as soon as *one* player
+is on a pad in this room, which is worth remembering — "both must stand" is not a strict gate here.
+
+Also verified: `pid_of(i)` and `xdotool getwindowpid` agree, so the process we read is the one whose
+window we look at.
+
+### Identification in a *wide* match room needs a different filter
+
+In this castle room the camera scrolls a long way, so pressing `d` moves **679 records** by ~1000 px
+— they are screen-space copies derived from the view, not fighters. Filtering to fighter-sized
+motion (`8 ≤ |Δhold| ≤ 400 px`, `|Δfree| ≤ 4 px`) leaves **10 candidates**:
+
+```
+0x106ff400   +176 (848 -> 1024)  stop 0.0     Right -48
+0x7e388066d400 +173 (912 -> 1085) stop 3.0    Right -288
+0x106fe800   -100              Right -12
+0x106fee00    -80              Right +128
+0x106ffa00    -64              Right +272
+0x190e000/0x190de00/0x190dc00  +47 each (1007 -> 1054)  Right +1   <- a body with its copies
+0x106fe200    -16              Right +48
+```
+
+So "the largest mover" is the wrong heuristic in a wide room (it picks a camera copy), and the
+fighter is one of ~10 fighter-sized movers. Next refinement: require the same record to answer
+**both** directions (`d` then `a`, returning by the same amount) and to have a sword sibling at
+`+0x400` — that should collapse the 10 to 1.
