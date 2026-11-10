@@ -42,7 +42,7 @@ farm.sh                     one wine prefix + one Xvfb display per instance
        ├─ key / held        xdotool key events, held 120 ms  → 100% reliable
        ├─ grab / frame      ImageMagick window capture → numpy
        └─ memory / poke     posts a request to …
-            └─ spy/nidspy.so      ~90 lines, LD_PRELOADed INTO the game
+            └─ spy/nidspy.so      Zig, LD_PRELOADed INTO the game
                                   reads/writes its own address space, no permissions
                                   protocol: /tmp/nid_cmd_<pid>
                                     dump <addr> <len> <path>
@@ -174,7 +174,7 @@ several agents or trainers can run side by side without interference.
 farm.sh                 farm lifecycle (init / start N / stop)
 nidlinux.py             launch, keys, screenshots, spy protocol
 nidstate.py             measurement library: game states, oracles, fighter enumeration
-spy/nidspy.c            the in-process reader/writer (+ build.sh → nidspy.so)
+spy/nidspy.zig          the in-process reader/writer (+ build.sh → nidspy.so)
 hunt_live.py            live-match scan experiment
 findstate.py            motion-based candidate generator (attract mode)
 pokehunt.py             poke-and-watch experiment (paused, superseded)

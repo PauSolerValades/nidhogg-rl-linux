@@ -42,7 +42,7 @@ type 0x174f900 → 0x191c400  x=8.0   y=128   P1 (yellow sprite 8.7 px)
 | item | requirement | status |
 |---|---|---|
 | control gate | **read-only**: input direction control (A) + record tracks sprite 1:1 (B) + no other record does (C) | **proven** — `nidstate.control_gate`; attracts fail A (0.0 px), READY passes 12/12 with median 0.87 px error; evidence in `docs/gate/` |
-| action→observation latency | ticks from held key to visible state | unknown |
+| action→observation latency | ticks from held key to visible state | **action send 0.17 ms** (`n.spy_key`, XTEST in-process; xdotool was 15.8 ms). Observer side is tick-aligned: `state()` costs 13 µs and a new sample appears within 1 ms of the game tick. Key-hold→visible-state is still ~30 ms (1.8 ticks) — that is the GAME's input poll, not ours |
 | reset semantics | writing `x`/`y`: does physics snap back? | **proven: `x += 300` is KEPT** (no snap-back, no crash, 3 trials) — resets are viable (worker W) |
 | address stability | stable within a room (re-proved after 10 s); **after a room/round transition the old addresses read frozen stale values** and the heap base does NOT move | proven both ways (workers T, W) |
 | writes | `poke`/`hold`/`add` work on some fields but have **killed the game twice**; not used by any gate | unsafe, untested on the proven body record |

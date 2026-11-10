@@ -45,7 +45,8 @@ python3 scripts/hunt_field.py  ~/nidhogg-record/<stamp> spec.json [--float]   # 
 ```
 nidlinux.py        launch/stop instances, keys, screenshots, spy protocol
 nidstate.py        measurement library: entry, identification, oracles, field readers
-spy/nidspy.c       in-process memory reader/writer (~90 lines; /proc/<pid>/mem is refused here)
+spy/nidspy.zig     in-process reader/writer, Zig 0.17.1 (~200 lines incl. comments;
+                   /proc/<pid>/mem is refused here). C version kept as nidspy.c
 scripts/           runtime install, VNC play, recorders, mining, load test
 briefs/            worker briefs (headless pi agents, one falsifiable target each)
 docs/               TMP_CURRENT_STATE, LAYOUT, MEMORY, OVERVIEW, INTERFACE, workers/, archive/

@@ -31,8 +31,10 @@ drive with keys, in parallel on a server.
 
 | thing | where | notes |
 |---|---|---|
-| In-process reader/writer | `spy/nidspy.so` (source `spy/nidspy.c`) | `/proc/<pid>/mem` is refused (ptrace_scope + container + reparenting); the spy reads its own memory. Protocol: `/tmp/nid_cmd_<pid>` lines `dump/poke/hold/add` |
-| Bandwidth / cost | — | 112 MB in ~0.1 s; a state read is ~10 ms; **one spy round trip costs ~50 ms of poll** (batch everything) |
+| In-process reader/writer | `spy/nidspy.so` (source `spy/nidspy.zig`, Zig 0.17.1) | `/proc/<pid>/mem` is refused (ptrace_scope + container + reparenting); the spy reads its own memory. Protocol: `/tmp/nid_cmd_<pid>` lines `dump/poke/hold/add/key/kd/ku/track/ping` |
+| Bandwidth / cost | — | 112 MB in ~0.1 s; **round trip 2.4 ms p50 / 2.6 p99 at a 2 ms poll** (was 51 ms at 50 ms); batching is free |
+| **Pushed state file (Phase 5, done)** | `/tmp/nid_state_<pid>`, `n.track(pid,p1,p2,score,tick)` + `n.state(pid)` | 128 bytes, tmp+rename, **one sample per game tick**: measured 61.4 samples/s, tick deltas `{1: 59}`, publish interval 16.37 ms p50 / 17.45 max. Reading it costs 13 µs |
+| In-process input (XTEST) | `n.spy_key(pid, keysym, ms)` | p50 **0.17 ms** vs 15.8 ms for an `xdotool` fork+exec (93x). Causal proof on a frozen screen: idle 0 px changed, one spy `Down` = 9360 px |
 | Fully-region recorder | `scripts/record_all.py`, `docs/workers/overnight.patch` | **117 regions / 1075 MB per dump** — the earlier recorder kept only 15 regions and that is why the score was missed for two sessions |
 
 ### 2.3 Object layout (see `docs/LAYOUT.md` for the table)
@@ -116,7 +118,8 @@ scripts/                        runtime, entry, identification, recording, minin
   mine_session.py               structural events from screenshots (fighter presence)
   hunt_field.py                 interval-delta field hunter (u32 and --float)
   loadtest.py                   how many instances the box carries
-spy/nidspy.c                    the in-process reader/writer (~90 lines)
+spy/nidspy.zig                  the in-process reader/writer (C original: nidspy.c)
+spy/selftest.py, scripts/tick_health.py   protocol + per-tick regression checks
 docs/LAYOUT.md                  memory map (this file's technical companion)
 docs/MEMORY.md                  chronological lab notebook, incl. every trap
 docs/OVERVIEW.md                the structured "why" document
@@ -158,8 +161,8 @@ docs/workers/*.json             raw reports from 9 workers (m, p, q, r, s, t, u,
    rather than a value change.
 2. **YELLOW score** — same mining as the orange one, restricted to `0xd412000`/`0xece0000`, with the
    HUD's P1 rect `[56,14,80,30]` as oracle.
-3. **Per-tick state file** — pin the proven offsets in the spy and write the state file at 60 Hz;
-   this is the actual RL interface and everything it needs is known.
+3. ~~Per-tick state file~~ — **done**, see §2.2. Remaining work here: add sword position once the
+   sword set is mapped, and round phase once it is found.
 4. **Episode reset** — write both fighters' x/y, verify the game continues sanely, and drop the 58 s
    menu entry from the loop.
 5. Only then: pick the trainer (the old GA or PPO) and start measuring rounds won per hour.
