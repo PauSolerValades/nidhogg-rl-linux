@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 import struct
 
@@ -85,7 +86,11 @@ def clean_farm(fresh=False):
     """
     farm = str(FARM)
     killed = 0
-    for name in ("wineserver", "wineserver64", "services.exe", "plugplay.exe"):
+    # Nidhogg.exe/steam.exe/explorer.exe too: stop() only knows the CURRENT procs.json, so a
+    # start/stop cycle leaks the previous instance's game process (measured: 20 leaked after
+    # five cycles). Same env-match rule as the wineservers: only this farm, never another.
+    for name in ("Nidhogg.exe", "Nidhoggr.exe", "wineserver", "wineserver64",
+                 "services.exe", "plugplay.exe", "explorer.exe", "steam.exe"):
         for pid in subprocess.run(["pgrep", "-x", name], capture_output=True,
                                   text=True).stdout.split():
             if farm in _env_of(pid):
@@ -212,6 +217,25 @@ def key(i, keysym, hold=0.0):
     else:
         subprocess.run(["xdotool", "key", "--clearmodifiers", keysym],
                        env=_env(i), capture_output=True)
+
+
+def spy_key(pid, keysym, ms=120):
+    """Send a key from INSIDE the game process (XTEST over the spy's own X connection).
+
+    Costs ~50 us instead of 16 ms for an xdotool fork+exec, and the hold/release happens
+    in the spy, so the caller does not have to sleep. Falls back to nothing if X11 or
+    libXtst is missing — check with `spy/selftest.py` or just measure.
+    """
+    _send(pid, f"key {keysym} {ms}")
+
+
+def spy_keydown(pid, keysym):
+    """Explicit key down/up from the spy, for holds longer than one call."""
+    _send(pid, f"kd {keysym}")
+
+
+def spy_keyup(pid, keysym):
+    _send(pid, f"ku {keysym}")
 
 
 def keydown(i, keysym):
@@ -367,18 +391,45 @@ def ensure_menu(i, tries=8):
 
 # ---------------------------------------------------------------- spy protocol
 
+_tmp_seq = 0
+
+
+def _send(pid, text):
+    """Post command(s) to the spy ATOMICALLY.
+
+    Writing straight into /tmp/nid_cmd_<pid> creates the file empty and fills it after, so a
+    spy poll can claim and dispatch a half-written command — measured as 4.5% lost pings at a
+    2 ms poll (the 50 ms poll only made it 25x rarer). Write a private file, then rename it
+    into place: rename is atomic, so the spy sees either nothing or the whole thing.
+    """
+    global _tmp_seq
+    _tmp_seq += 1
+    tmp = Path(f"/tmp/nid_cmd_{pid}.{os.getpid()}.{_tmp_seq}")
+    tmp.write_text(text if text.endswith("\n") else text + "\n")
+    os.replace(tmp, f"/tmp/nid_cmd_{pid}")
+
+
+def _wait_idle(pid, timeout):
+    """Wait until the spy has BOTH claimed the command and finished executing it.
+
+    The cmd file disappears at claim time (rename), so waiting on it alone reports "done"
+    while a 30 MB dump is still being written — that reads back a truncated file. The spy
+    deletes <cmd>.done only after the whole batch has run, so wait for both.
+    """
+    cmd = Path(f"/tmp/nid_cmd_{pid}")
+    done = Path(f"/tmp/nid_cmd_{pid}.done")
+    t0 = time.time()
+    while (cmd.exists() or done.exists()) and time.time() - t0 < timeout:
+        time.sleep(0.0002)
+    return not (cmd.exists() or done.exists())
+
 
 def memory(pid, addr, size, path="/tmp/nid_dump.bin"):
     """Ask the in-process spy for a byte range (it reads its own memory)."""
     out = Path(path)
     out.unlink(missing_ok=True)
-    cmd = Path(f"/tmp/nid_cmd_{pid}")
-    cmd.write_text(f"dump {addr:x} {size:x} {path}\n")
-    t0 = time.time()
-    while cmd.exists() and time.time() - t0 < 10:     # a 112 MB dump takes ~0.2 s idle, more under load
-        time.sleep(0.02)
-    if cmd.exists():
-        cmd.unlink(missing_ok=True)
+    _send(pid, f"dump {addr:x} {size:x} {path}")
+    if not _wait_idle(pid, 10):        # a 112 MB dump takes ~0.2 s idle, more under load
         return None
     return out.read_bytes() if out.exists() else None
 
@@ -386,20 +437,17 @@ def memory(pid, addr, size, path="/tmp/nid_dump.bin"):
 def memory_many(pid, requests, timeout=15.0):
     """Read several ranges in ONE spy round trip.
 
-    Each individual request costs a full spy poll interval (~50 ms), so scanning 120 regions one
-    at a time wasted ~6 s doing nothing. The spy drains every queued line in a single pass, so
-    queueing them all costs one poll and then pure copy time.
+    The spy drains every queued line in a single pass, so queueing N requests costs one poll
+    interval and then pure copy time — batching is free (measured: 3 requests == 1 request).
     """
-    cmd = Path(f"/tmp/nid_cmd_{pid}")
     lines = []
     for addr, size, path in requests:
         cmd_out = Path(path)
         cmd_out.unlink(missing_ok=True)
         lines.append(f"dump {addr:x} {size:x} {path}")
-    cmd.write_text("\n".join(lines) + "\n")
-    t0 = time.time()
-    while cmd.exists() and time.time() - t0 < timeout:
-        time.sleep(0.01)
+    _send(pid, "\n".join(lines))
+    if not _wait_idle(pid, timeout):
+        return [None] * len(requests)
     out = []
     for addr, size, path in requests:
         p = Path(path)
@@ -407,25 +455,114 @@ def memory_many(pid, requests, timeout=15.0):
     return out
 
 
+# ---------------------------------------------------------------- pushed state file
+#
+# The spy samples the tracked records itself and publishes one 128-byte sample per game
+# tick to /tmp/nid_state_<pid>. Reading it costs one open+read (~20 us) and no round trip,
+# so the loop is limited by the agent, not by the spy.
+#
+#   n.track(pid, p1=<rec>, p2=<rec>, tick=<tick addr>)   start publishing
+#   n.state(pid)                                         latest sample or None
+#   n.wait_state(pid, after_seq)                         next sample after a seq
+#
+# Layout must match Snapshot in spy/nidspy.zig — change both together.
+STATE_FMT = "<IIQQIIfffIfffIII56s"      # magic version seq t_ns tick flags | p1 | p2 | scores
+STATE_SIZE = 128
+STATE_MAGIC = 0x4E494431
+FLAG_P1, FLAG_P2, FLAG_SCORE, FLAG_TICK = 1, 2, 4, 8
+
+
+class NidState(NamedTuple):
+    seq: int
+    t_ns: int
+    tick: int
+    flags: int
+    p1_x: float
+    p1_y: float
+    p1_facing: float
+    p1_anim: int
+    p2_x: float
+    p2_y: float
+    p2_facing: float
+    p2_anim: int
+    score_orange: int
+    score_yellow: int
+
+    @property
+    def t(self):
+        return self.t_ns / 1e9
+
+
+def track(pid, p1=0, p2=0, score=0, tick=0):
+    """Start (or change) what the spy publishes. All zeros = stop publishing."""
+    _send(pid, f"track {p1:x} {p2:x} {score:x} {tick:x}")
+
+
+def untrack(pid):
+    track(pid)
+
+
+def state(pid):
+    """Latest pushed sample, or None if nothing is tracked / the spy is not there."""
+    try:
+        raw = Path(f"/tmp/nid_state_{pid}").read_bytes()
+    except OSError:
+        return None
+    if len(raw) != STATE_SIZE:
+        return None
+    f = struct.unpack(STATE_FMT, raw)
+    if f[0] != STATE_MAGIC:
+        return None
+    return NidState(seq=f[2], t_ns=f[3], tick=f[4], flags=f[5],
+                    p1_x=f[6], p1_y=f[7], p1_facing=f[8], p1_anim=f[9],
+                    p2_x=f[10], p2_y=f[11], p2_facing=f[12], p2_anim=f[13],
+                    score_orange=f[14], score_yellow=f[15])
+
+
+def wait_state(pid, after_seq=0, timeout=0.2):
+    """Block until a sample newer than after_seq arrives.
+
+    With after_seq=0 the floor is whatever is on disk right now, so this always means
+    "the NEXT sample" — the obvious meaning, and the one that does not hand you a stale
+    sample from before your own write.
+    """
+    if not after_seq:
+        cur = state(pid)
+        after_seq = cur.seq if cur else 0
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        s = state(pid)
+        if s is not None and s.seq > after_seq:
+            return s
+        time.sleep(0.0005)
+    return None
+
+
 def poke(pid, addr, raw):
-    Path(f"/tmp/nid_cmd_{pid}").write_text(f"poke {addr:x} {raw.hex()}\n")
+    _send(pid, f"poke {addr:x} {raw.hex()}")
     time.sleep(0.2)
+
+
+def hold(pid, addr, raw, ms=400):
+    """Pin `raw` at `addr` for `ms` so the game cannot overwrite it before we look."""
+    _send(pid, f"hold {addr:x} {raw.hex()} {ms}")
+    time.sleep(ms / 1000 + 0.05)
 
 
 def accumulate(pid, addr, delta, width=4, ms=400):
     """Nudge a value repeatedly: physics overwrites constants, it cannot undo a drift."""
     fmt = "<f" if width == 4 else "<d"
-    Path(f"/tmp/nid_cmd_{pid}").write_text(
-        f"add {addr:x} {struct.pack(fmt, delta).hex()} {ms}\n")
+    _send(pid, f"add {addr:x} {struct.pack(fmt, delta).hex()} {ms}")
     time.sleep(ms / 1000 + 0.05)
 
 
 def ping(pid):
     res = Path(f"/tmp/nid_res_{pid}")
     res.unlink(missing_ok=True)
-    Path(f"/tmp/nid_cmd_{pid}").write_text("ping\n")
-    for _ in range(40):
-        time.sleep(0.05)
+    _send(pid, "ping")
+    t0 = time.time()
+    while time.time() - t0 < 2.0:
+        time.sleep(0.002)
         if res.exists():
             return res.read_text().strip()
     return None

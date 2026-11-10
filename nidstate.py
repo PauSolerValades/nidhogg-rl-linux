@@ -613,6 +613,47 @@ def find_fighters(pid, heap=None):
     return pairs_out
 
 
+# ---------------------------------------------------------------- tick counter
+#
+# A u32 that advances ~60 times a second, proven to exist (worker T: 60.0 Hz, 4% jitter).
+# Its address is per process, so it is re-found here instead of cached. Two windows are
+# not enough — a one-off step passes any single interval — so every window must agree.
+
+def main_heap(pid):
+    """[heap] base and size, or (0, 0). Do not confuse it with biggest_heap()."""
+    for line in open(f"/proc/{pid}/maps"):
+        if "[heap]" in line:
+            a, b = (int(x, 16) for x in line.split()[0].split("-"))
+            return a, b - a
+    return 0, 0
+
+
+def find_tick(pid, windows=4, gap=0.9):
+    """Address of the 60 Hz counter, or None. Costs `windows` heap dumps (~3 s)."""
+    base, size = main_heap(pid)
+    if not base:
+        return None
+    prev = None
+    stamp = 0.0
+    seen = None
+    for k in range(windows):
+        raw = n.memory(pid, base, size, str(ART / f"tick{k}.bin"))
+        t = time.time()
+        if raw is None:
+            return None
+        cur = np.frombuffer(raw[: len(raw) // 4 * 4], "<u4").astype(np.int64)
+        if prev is not None:
+            want = 60.0 * (t - stamp)
+            d = cur - prev
+            ok = np.nonzero((np.abs(d - want) < max(8, 0.2 * want)) & (prev < 0xFFFF0000))[0]
+            seen = set(ok.tolist()) if seen is None else (seen & set(ok.tolist()))
+        prev, stamp = cur, t
+        time.sleep(gap)
+    if not seen:
+        return None
+    return base + min(seen) * 4
+
+
 # ---------------------------------------------------------------- CONTROL GATE
 #
 # Falsifiable and READ-ONLY. Writing to a fighter's x at 2 kHz killed the game twice, so the
