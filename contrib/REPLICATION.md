@@ -1,8 +1,12 @@
-# Independent replication on a second host — what reproduced, what did not
+# Independent replication on a fresh checkout — what reproduced, what did not
 
-All results below were produced on a **different machine** (artemis, 384-core server, GE-Proton 11-12)
-from a **byte-identical build** — `data.win` sha256 `42969eea1ed383fb…`, `Nidhogg.exe` `5b87efafdd9f99e1…`
+All results below were produced on **artemis** (384-core server, GE-Proton 11-12) from a
+**byte-identical build** — `data.win` sha256 `42969eea1ed383fb…`, `Nidhogg.exe` `5b87efafdd9f99e1…`
 — using your modules unmodified: `nidlinux.py`, `nidstate.py` and `spy/nidspy.so` from this repo.
+
+**Correction (post-merge):** this is not a different machine from the one the repo lives on — it is
+`artemis` itself, where the probe was just re-run from this checkout. So the four non-reproductions
+below cannot be explained away as "a different environment", which makes item 1 stronger, not weaker.
 
 Nothing here is a claim about your machine; it is what a second pair of hands measured with your tools.
 Each item is followed by how to refute it.
@@ -20,6 +24,12 @@ Each item is followed by how to refute it.
 ## Did NOT reproduce ❌
 
 ### 1. The ORANGE score address does not drive the displayed score on our instance
+**CONFIRMED on this host** (`artemis`, GE-Proton 11-12, `data.win` `42969eea1ed383fb`) by
+`scripts/score_oracle.py`, recorded and re-verified cold in `state/claims.jsonl`. Control A: the write
+lands (readback 0/1/2/0 exact). Control B: the same pixel oracle sees the pause overlay (28 188 static
+px change), so a flat result is not a blind instrument. Test: 0 static pixels differ between any two of
+0/1/2, whole frame, READY screen.
+
 Writing `u32` 0 → 1 → 2 to **`0xd5f57c8`** lands in memory (readback confirms) but the **P2 HUD digit
 does not change** (measured rect `[214,14,238,30]`: 479 → 479 px), **including on the READY screen**,
 where the HUD is drawn, with a forced redraw between writes.

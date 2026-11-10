@@ -48,7 +48,7 @@ y = 192 on arena ground, 128 on the READY pads
 
 | field | address / offset | how proven |
 |---|---|---|
-| **ORANGE WINS (score)** | **`0xd5f57c8`**, region `0xd412000–0xdd10000`, u32 | write 0 → tally blank, 1 → one bar, 2 → two bars; reproduced in two processes; same absolute address across processes (region base is not ASLR'd) |
+| **ORANGE WINS (score)** | **`0xd5f57c8`**, region `0xd412000–0xdd10000`, u32 | **DISPUTED — write lands, screen does not change.** Earlier note said "write 0 → tally blank, 1 → two bars, reproduced in two processes"; a re-test on this host with a byte-identical build (`data.win` `42969eea1ed383fb`) found 0 static pixels changed between 0/1/2 on the READY screen, with the write readback confirmed and a positive control (pause overlay: 28k px). See `state/claims.jsonl` and `python3 scripts/score_oracle.py 0`. Do not build reward on this address until a write is seen to move the HUD. |
 | score copies (not displayed) | `0xf3c6368`, `0xf3c63e8`, `0xf3c6468` (0x80 stride, region `0xece0000`) | they track 0→1→2 but poking them never changes the HUD |
 | tick counter | per-process, find by rate test (~60 Hz, 4 % jitter) | rate measurement |
 | fighters P1/P2 x,y,facing,anim,sword | offsets above | input causality (sign+size+stop+reverse), 3/3 fresh instances |
