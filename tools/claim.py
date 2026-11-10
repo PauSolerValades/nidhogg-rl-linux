@@ -43,12 +43,18 @@ import subprocess
 import sys
 import time
 
-LEDGER = os.path.join("state", "claims.jsonl")
+# Anchored to the repo root, not the cwd: a cwd-relative ledger silently looks empty (verify then
+# reports success) when run from anywhere but the directory you recorded in.
+LEDGER = os.environ.get("CLAIM_LEDGER") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), os.pardir, "state", "claims.jsonl")
+# 180 s: enter_match_v2 alone is ~58 s, so a 30 s default records "__timeout__" as evidence.
+TIMEOUT = 180
 
 
-def run(cmd, timeout=30):
+def run(cmd, timeout=None):
     try:
-        p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                           timeout=timeout or TIMEOUT)
         return (p.stdout + p.stderr).strip(), p.returncode
     except subprocess.TimeoutExpired:
         return "__timeout__", 124
@@ -83,31 +89,33 @@ def load():
     return out
 
 
+def check(c):
+    """Run one claim's evidence and falsifier; return (status, output, out_sha)."""
+    out, rc = run(c["cmd"])
+    now = sha(out)
+    status = "OK"
+    if c.get("falsifier"):
+        # a falsifier must exit 0 when the claim is FALSE. If it succeeds, the claim is refuted.
+        _, f_rc = run(c["falsifier"])
+        if f_rc == 0:
+            status = "REFUTED"
+    if status == "OK" and rc != c["rc"]:
+        status = "ERROR"
+    elif status == "OK" and now != c["sha"]:
+        status = "DRIFT"
+    return status, out, now
+
+
 def verify():
     claims = load()
     if not claims:
-        print("no claims recorded")
-        return 0
+        # An empty ledger must never look like "everything holds".
+        print(f"no claims in {os.path.abspath(LEDGER)} - nothing verified")
+        return 2
     bad = 0
     for c in claims:
-        out, rc = run(c["cmd"])
-        now = sha(out)
-        fals = c.get("falsifier")
-        refuted = False
-        if fals:
-            # a falsifier must exit 0 when the claim is FALSE. If it succeeds, the claim is refuted.
-            f_out, f_rc = run(fals)
-            refuted = (f_rc == 0)
-        if refuted:
-            status = "REFUTED"
-            bad += 1
-        elif now == c["sha"] and rc == c["rc"]:
-            status = "OK"
-        elif rc != c["rc"]:
-            status = "ERROR"
-            bad += 1
-        else:
-            status = "DRIFT"
+        status, out, now = check(c)
+        if status != "OK":
             bad += 1
         print(f"[{status:5s}] {c['text']}")
         print(f"          {c['cmd']}")
@@ -150,6 +158,39 @@ FIXTURES = [
 ]
 
 
+SELFTEST = [
+    # (label, claim dict, expected status) - the four states check() must distinguish.
+    ("still-true evidence verifies",
+     {"cmd": "echo stable", "rc": 0,
+      "sha": hashlib.sha256(b"stable").hexdigest()[:16]}, "OK"),
+    ("changed output is DRIFT",
+     {"cmd": "echo stable", "rc": 0,
+      "sha": hashlib.sha256(b"unstable").hexdigest()[:16]}, "DRIFT"),
+    ("broken command is ERROR",
+     {"cmd": "echo stable", "rc": 7,
+      "sha": hashlib.sha256(b"stable").hexdigest()[:16]}, "ERROR"),
+    ("fired falsifier is REFUTED",
+     {"cmd": "echo stable", "rc": 0,
+      "sha": hashlib.sha256(b"stable").hexdigest()[:16],
+      "falsifier": "python3 -c 'import sys; sys.exit(0)'"}, "REFUTED"),
+    ("silent falsifier is not a refutation",
+     {"cmd": "echo stable", "rc": 0,
+      "sha": hashlib.sha256(b"stable").hexdigest()[:16],
+      "falsifier": "python3 -c 'import sys; sys.exit(1)'"}, "OK"),
+]
+
+
+def selftest():
+    """Exercise check() itself. The historical fixtures only prove the falsifiers bite; they pass
+    even if check()/verify() are deleted, so they are not a test of the ledger."""
+    ok = 0
+    for label, claim, want in SELFTEST:
+        status, _, _ = check(claim)
+        ok += (status == want)
+        print(f"[{'PASS' if status == want else 'FAIL':4s}] check() -> {status:8s} (want {want:8s}) {label}")
+    return ok, len(SELFTEST)
+
+
 def fixtures():
     """Run the historical false claims through the ledger and require every one to be REFUTED."""
     print("running the five historical false claims as fixtures\n")
@@ -163,7 +204,10 @@ def fixtures():
         print(f"[{'REFUTED' if refuted else 'MISSED ':6s}] {text}")
         print(f"           falsifier rc={f_rc} -> {'claim is false, correctly caught' if refuted else 'LEDGER FAILED TO CATCH THIS'}")
     print(f"\n{caught}/{len(FIXTURES)} historical false claims are caught by their falsifiers")
-    return 0 if caught == len(FIXTURES) else 1
+    print("\nchecking the ledger itself\n")
+    ok, total = selftest()
+    print(f"\n{ok}/{total} ledger states behave correctly")
+    return 0 if caught == len(FIXTURES) and ok == total else 1
 
 
 def main():
@@ -172,7 +216,9 @@ def main():
     ap.add_argument("text", nargs="?")
     ap.add_argument("--cmd")
     ap.add_argument("--falsifier")
+    ap.add_argument("--timeout", type=int, default=TIMEOUT)
     a = ap.parse_args()
+    globals()["TIMEOUT"] = a.timeout
     if a.action == "record":
         if not a.text or not a.cmd:
             print("record needs TEXT and --cmd")

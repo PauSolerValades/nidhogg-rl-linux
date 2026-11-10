@@ -9,7 +9,7 @@ measurement, not ours. Do not re-derive a GIVEN; consume it.
 | fact | value |
 |---|---|
 | entry to a live match | `nidstate.enter_match_v2(i)` — MULTIPLAYER/local-2P, ~58 s, proven |
-| P1 / P2 keys | `WASD` / `IJKL` — one harness drives both (self-play is free) |
+| P1 / P2 keys | **UNVERIFIED — do not consume yet.** This row previously read `WASD` / `IJKL`; no lane ever tested `IJKL`, `docs/MEMORY.md:357` measured `i/j/k/l` as doing nothing, and the replication in `contrib/REPLICATION.md` bound P2 with the **arrow keys**. Human report: P1 `ASDFG`, P2 arrows, plus other keys. Measure both with `find_players_by_input` on READY before any lane relies on it. |
 | fighter record layout | stride `0x200`; `x@+0xEC`, `y@+0xF0`, `facing f32@+0xD8`, `anim u32@+0xBC`, `type u32@+0x88` |
 | ground / pad y | `192` / `128` |
 | **ORANGE (P2) score** | **`0xd5f57c8`** u32 — write 0/1/2 changes HUD bars |
@@ -76,7 +76,7 @@ Reward = Δ(ORANGE score) − Δ(YELLOW score) per round, plus shaped terms from
 **Accept:** a scripted episode yields a non-zero reward trace with correct sign when we forfeit.
 
 ### Lane G — self-play driver *(needs A + D)*
-One policy drives `WASD`, opponent policy drives `IJKL`; episodes reset via lane D.
+One policy drives P1's keys, the opponent policy P2's (see GIVENS — bindings still unverified). Episodes reset via lane D.
 **Accept:** 100 consecutive rounds with both policies acting, no crash, round outcomes recorded.
 **Falsifier:** any round where neither fighter moves.
 
