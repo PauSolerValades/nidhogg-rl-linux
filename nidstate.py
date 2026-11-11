@@ -1210,3 +1210,120 @@ def enter_match_v2(i, verbose=True, stand=1.6, tries=2):
         if verbose:
             print("  stage select accepted but not a live match yet")
     return False
+
+
+# ---------------------------------------------------------------- instance list (engine identity)
+#
+# The engine keeps a doubly-linked list of instances per object type (0x80-byte nodes):
+#   node+0x18 type   +0x30 prev (0 = head)   +0x38 next   +0x40 id   +0x48 record
+# and the head is pointed at by the OBJECT DEFINITION, at type_ptr + 0xa0 — found 2026-11-11,
+# the same offset for two different object types, in the fixed-base region 0x16a0000.
+#
+# So identity does not need a hunt: any record's +0x88 gives the type, the type gives the head,
+# and the walk gives every live instance of that object — always current, never a stale copy.
+#
+# Node memory is RECYCLED between rounds: walk from the anchor every time, never cache a node.
+TYPE_LIST_HEAD = 0xA0     # offset inside the object definition that holds the list head
+NODE = 0x80
+NODE_TYPE, NODE_PREV, NODE_NEXT, NODE_ID, NODE_REC = 0x18, 0x30, 0x38, 0x40, 0x48
+
+
+def _u64(pid, addr):
+    raw = n.memory(pid, addr, 8, "/tmp/id_u64.bin")
+    return struct.unpack("<Q", raw)[0] if raw else None
+
+
+def instance_chain(pid, type_ptr, limit=64):
+    """Every live instance of an object type, walked from the engine's own list.
+
+    Returns [{"node", "id", "rec", "type"}] — empty if the type has no list yet.
+    """
+    head = _u64(pid, type_ptr + TYPE_LIST_HEAD)
+    if not head:
+        return []
+    out, seen, cur = [], set(), head
+    while cur and cur not in seen and len(out) < limit:
+        raw = n.memory(pid, cur, NODE + 4, "/tmp/id_node.bin")
+        if raw is None:
+            break
+        f = struct.unpack_from("<16Q", raw)
+        seen.add(cur)
+        out.append({"node": cur, "type": f[NODE_TYPE // 8], "id": f[NODE_ID // 8],
+                    "rec": f[NODE_REC // 8]})
+        nxt = f[NODE_NEXT // 8]
+        if nxt and nxt % 8 == 0:
+            nxt_prev = _u64(pid, nxt + NODE_PREV)
+            if nxt_prev != cur:      # a broken link means the list was reallocated mid-walk
+                break
+        cur = nxt
+    return out
+
+
+def type_of_record(pid, record, timeout=120, max_candidates=200):
+    """The OBJECT DEFINITION pointer for a record — found via its list node, not its +0x88.
+
+    The record's own +0x88 is not the object definition (different heap pointer, changes per
+    run); the node's +0x18 is. So: find qwords equal to `record`, treat each as node+0x48, and
+    validate the candidate BY ITS FUNCTION — type+0xa0 must walk to a chain that contains this
+    record. A value that merely looks like a pointer is rejected by that walk (0xd00000000 was
+    accepted by a range check).
+
+    One full dump of rw memory (~1.2 s) per process; only needed once per process.
+    """
+    regs = regions(pid, min_size=1 << 20)
+
+    def mapped(addr, size=8):
+        return any(a <= addr and addr + size <= b for a, b in regs)
+
+    def u64(addr):
+        if not mapped(addr):
+            return None
+        raw = n.memory(pid, addr, 8, "/tmp/tor_u64.bin")
+        return struct.unpack("<Q", raw)[0] if raw else None
+
+    def chain_has(head, want):
+        seen, cur = set(), head
+        while cur and cur not in seen and len(seen) < 64:
+            if not mapped(cur, NODE + 8) or cur % 8:
+                return False
+            raw = n.memory(pid, cur, NODE + 4, "/tmp/tor_node.bin")
+            if raw is None:
+                return False
+            f = struct.unpack_from("<16Q", raw)
+            if f[NODE_REC // 8] == want:
+                return True
+            seen.add(cur)
+            nxt = f[NODE_NEXT // 8]
+            if nxt and u64(nxt + NODE_PREV) != cur:
+                return False
+            cur = nxt
+        return False
+
+    reqs = [(a, b - a, f"/tmp/tor_{i}.bin") for i, (a, b) in enumerate(regs)]
+    blobs = n.memory_many(pid, reqs, timeout=timeout)
+    want = struct.pack("<Q", record)
+    tried = 0
+    for (a, b), raw in zip(regs, blobs):
+        if raw is None:
+            continue
+        i = raw.find(want)
+        while i >= 0 and tried < max_candidates:
+            if i % 8 == 0:
+                tried += 1
+                node = a + i - NODE_REC
+                nd = n.memory(pid, node, NODE + 4, "/tmp/tor_node.bin") if mapped(node, NODE + 8) else None
+                if nd is not None:
+                    f = struct.unpack_from("<16Q", nd)
+                    if f[NODE_REC // 8] == record:
+                        cand = f[NODE_TYPE // 8]
+                        if cand > 0x10000 and mapped(cand, 0x100):
+                            head = u64(cand + TYPE_LIST_HEAD)
+                            if head and chain_has(head, record):
+                                return cand
+            i = raw.find(want, i + 1)
+    return None
+
+
+def instances_of_type(pid, type_ptr):
+    """All live instances of an object definition (walk from type_ptr + 0xa0)."""
+    return instance_chain(pid, type_ptr)

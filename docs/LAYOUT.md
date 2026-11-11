@@ -25,6 +25,38 @@ stride 0x200, per-room, addresses change per process (heap base moves) AND per r
 arm slot disappeared and the sword slid from +0x400 to +0x200 inside one session). Identify the arm
 and sword by their *type pointer* and by *behaviour*, never by offset arithmetic.
 
+## The instance list (engine identity) — proven 2026-11-11
+
+Every object type has a doubly-linked list of live instances. Node stride `0x80`:
+
+```
++0x18  u64  OBJECT DEFINITION pointer   (the same for every instance of that object)
++0x30  u64  prev node                    (0 = this node is the head)
++0x38  u64  next node                    (0 = tail)
++0x40  u64  instance id                  (consecutive per creation)
++0x48  u64  record pointer               -> the 0x200 record: x@+0xEC, y@+0xF0, facing@+0xD8
+```
+
+**The head of the list is stored in the object definition at `type + 0xa0`** (the same offset
+for every type checked, in the fixed-base region `0x16a0000`). So identity is a lookup, not a
+hunt:
+
+```
+any record -> find its node (one pointer scan, ~1.2 s, once per process)
+           -> node.type -> u64(type + 0xa0) -> head -> walk -> every live instance of that object
+```
+
+Two traps, both measured:
+* the record's own `+0x88` is **not** the object definition (different heap pointer, changes per
+  run); the node's `+0x18` is.
+* node memory is **recycled** every round, and the object-definition pointer itself changed
+  across a transition (`0x16e9900` -> `0x16e8c00`) — so re-resolve after each round, and never
+  cache a node.
+
+Acceptance (`scripts/identity_live.py`): type -> head -> walk found 2 plausible instances,
+exactly one moved on `d` (liveness), and after a forfeit + new round the same lookup returned the
+new players (ids `0x186a7/8` -> `0x18760/61`) with **zero identification key presses**.
+
 ## Multiple swords
 
 A sword can be thrown, and a dead player's sword stays on the ground, so **more than two sword

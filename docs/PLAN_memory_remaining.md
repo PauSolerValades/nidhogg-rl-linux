@@ -116,6 +116,21 @@ identity cheap enough to also use *per frame* for safety checks.
 
 ---
 
+## 2.9 Item A — DONE 2026-11-11
+
+Solved, and not in the shape the plan guessed (that is the point of writing it down):
+
+* **The anchor is per object type, not a global**: the head of a type's instance list is stored
+  at `object_definition + 0xa0`, the same offset for every type checked.
+* **Bootstrap** costs one full rw dump (~1.2 s) once per process: record -> node -> node.type.
+* **Then identity is a lookup**: `nidstate.type_of_record` + `instances_of_type`, a handful of
+  reads per round.
+* The object-definition pointer **changes across a round** (`0x16e9900` -> `0x16e8c00`), so
+  re-resolve per round instead of caching. Node memory is recycled as expected.
+* `scripts/anchor_scan.py` is the discovery tool (structural chain validation, no hardcoded
+  regions); `scripts/identity_live.py` is the acceptance test, and it passes all four criteria —
+  including a round transition with zero identification key presses.
+
 ## 3. Item B — round phase
 
 ### B1. Boundary diff, with exact timing and both directions

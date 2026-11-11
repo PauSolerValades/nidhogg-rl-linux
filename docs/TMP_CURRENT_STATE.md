@@ -94,6 +94,23 @@ Consequences:
 * The field will not fall to poke-and-look. It needs a round-boundary diff (dump, win, dump).
 * `state/claims.jsonl` holds the two verification claims; `python3 tools/claim.py verify` → 2/2 OK.
 
+### 2.4d Identity: the engine's instance list (PROVEN 2026-11-11)
+
+Finding out "which record is the player, right now" no longer needs key presses. Every object has
+a linked list of live instances; the head is at `object_definition + 0xa0` (see `docs/LAYOUT.md`).
+Node = 0x80 bytes, `type@+0x18`, `prev@+0x30`, `next@+0x38`, `id@+0x40`, `record@+0x48`.
+
+`nidstate.type_of_record(pid, rec)` + `nidstate.instances_of_type(pid, type)` + a 1.2 s one-time
+scan. Acceptance (`scripts/identity_live.py 0`, live match):
+
+* the walk of the player type held **exactly 2** instances and they were the players;
+* pressing `d` moved exactly one of them (the walk is live, not a stale copy);
+* after a forfeit and a new round the same lookup returned the new players
+  (ids `0x186a7/8` -> `0x18760/61`) with **zero identification presses**.
+
+Caveats: the object-definition pointer changes across a round, so re-resolve per round; bootstrapping
+(record -> node) costs one full rw dump (~1.2 s) once per process.
+
 ### 2.5 Game behaviour measured (matters for the RL loop)
 
 * **Entry**: menu → `Enter×3` → READY → walk both onto pads (wall ± 0.333·W) → stage select → `Enter`.
