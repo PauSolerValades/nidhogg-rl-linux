@@ -1,0 +1,433 @@
+{
+ "source": "/home/psoler/nidhogg-record/20261111-234917/",
+ "session": {
+  "readme": "human session 2026-11-11; fresh match reset the tally; yellow 1->2 at t=165.5s (boundary), orange 0->1 at t=258.4s",
+  "dumps": [
+   "00150505 (t=150.5, before yellow win)",
+   "00165530 (t=165.5, after)",
+   "00255765 (t=255.8, before orange win)"
+  ]
+ },
+ "rule": "+1 across the yellow boundary AND unchanged across the orange boundary",
+ "counts": {
+  "changed_at_boundary": null,
+  "u32_delta1": 622,
+  "strict_1_to_2": 69
+ },
+ "candidates": [
+  {
+   "addr": "0xd04f898",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xd1a8f8c",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd54b4",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd557c",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5cf8",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5d04",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5d20",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5d2c",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5d48",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5d54",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5d70",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5d7c",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5d98",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5da4",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5dc0",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5dcc",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5de8",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5df4",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5e10",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xddd5e1c",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0xf3c65e8",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10425668",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10427a68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10437768",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x1043a268",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x1043e768",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10441c68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10450d68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10455268",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10459068",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10466a68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10473068",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10480068",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10487468",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x1048ac68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10493d68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10495f68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10496768",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x1049f168",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x104a3168",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x104a8d68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x104ae968",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x104eb468",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x104f8568",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10503f68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10517f68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x1051b168",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x1051c568",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x1051de68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10523b68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10527568",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x1052df68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10530668",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10538568",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10546768",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10550e68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x108dcf68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x108e8c68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x108f8d28",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10ca6924",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x10ca6928",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x11315c58",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x119dc228",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x119dcba8",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x119de3e8",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x119e5ce8",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x119e7d68",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x78bb9b7bdde0",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  },
+  {
+   "addr": "0x78bb9b7bddf4",
+   "before": 1,
+   "yellow": 2,
+   "end": 2
+  }
+ ]
+}
