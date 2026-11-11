@@ -76,8 +76,20 @@ def main():
     a = ap.parse_args()
     i = a.instance
     pid = n._game_pid(i)
-    assert pid, "no game process"
-    assert s.on_ready_screen(i), "not on READY — the tally is only drawn there"
+    if not pid:                                # self-contained: a claim records one command
+        print(f"starting instance {i} ...")
+        n.start_ids([i])
+        for _ in range(40):
+            pid = n._game_pid(i)
+            if pid:
+                break
+            time.sleep(3)
+    if not pid:
+        print("NO INSTANCE")
+        return 2
+    if not s.on_ready_screen(i) and not s.enter_ready(i):
+        print("NOT READY (the tally is only drawn there)")
+        return 2                                # cannot run != field found
 
     shown = shoot(i)
     print(f"pid {pid}  DISPLAYED: yellow {shown['yellow']} bar(s), orange {shown['orange']} bar(s)")
@@ -108,7 +120,7 @@ def main():
     print(f"\nrestored -> displayed: yellow {after['yellow']}, orange {after['orange']}")
     if detected:
         print("FOUND: the display follows", ", ".join(f"{hex(x)}(={v})" for x, v, _ in detected))
-        return 1
+        return 1                                # a field drives it: the claim is false
     print("REFUTATION HOLDS: no candidate field drives the displayed tally")
     return 0
 

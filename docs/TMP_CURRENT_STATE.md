@@ -53,6 +53,24 @@ y = 192 on arena ground, 128 on the READY pads
 | tick counter | per-process, find by rate test (~60 Hz, 4 % jitter) | rate measurement |
 | fighters P1/P2 x,y,facing,anim,sword | offsets above | input causality (sign+size+stop+reverse), 3/3 fresh instances |
 
+### 2.4c Claims ledger and what it caught (2026-11-11)
+
+`state/claims.jsonl` + `tools/claim.py` (from the collaborator's PR) now hold the score and menu
+claims; `verify` re-runs each command and each falsifier. Two protocol rules were learned the
+hard way while recording them:
+
+1. **A falsifier must distinguish "refuted" from "could not run".** Two of my claims were first
+   marked REFUTED because their falsifier fired on a script that merely failed to reach READY.
+   Scripts used as falsifiers exit `2` for "inconclusive" and `1` only for "claim false".
+2. **Evidence must be stable, and farms must be isolated.** A recorded `cmd` that prints a pid or
+   a bar count drifts on every run; and `start_ids()` calls `clean_farm()`, which stops *every*
+   instance in that farm — so two claims sharing a farm destroy each other. One farm per claim.
+
+Also fixed, because three scripts had to work around it: `_game_pid` returned a `KeyError` on a
+cold farm (now `None`), and it returned the *first* process matching `DISPLAY=` (now the newest,
+preferring one whose spy answers) — a leftover instance on the same display made every read
+return `None` while the screen never changed.
+
 ### 2.4b The displayed tally is not driven by any known int (2026-11-10)
 
 `scripts/score_state.py` counts the tally bars straight from the frame (one tall bright column

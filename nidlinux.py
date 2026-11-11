@@ -171,8 +171,16 @@ def stop_id(i):
 
 
 def _game_pid(i):
-    """The wine process for instance i: the Nidhogg.exe whose DISPLAY matches."""
-    disp = _pids()[str(i)]["display"]
+    """The wine process for instance i: the Nidhogg.exe whose DISPLAY matches, or None.
+
+    None (not KeyError) when the farm has never been started: three separate scripts had to
+    wrap this in try/except KeyError because a cold farm is the normal case on first run.
+    """
+    info = _pids().get(str(i))
+    if not info:
+        return None
+    disp = info["display"]
+    matches = []
     for d in Path("/proc").iterdir():
         if not d.name.isdigit():
             continue
@@ -183,8 +191,17 @@ def _game_pid(i):
         except OSError:
             continue
         if f"DISPLAY={disp}".encode() in env:
-            return int(d.name)
-    return None
+            matches.append(int(d.name))
+    if len(matches) <= 1:
+        return matches[0] if matches else None
+    # Two games on one display happens for real: a leftover from an earlier launch plus the
+    # new one. Returning the first match then drives a process with no spy (reads come back
+    # None, the screen never changes) — so prefer the newest, and among equals the one whose
+    # spy answers.
+    for pid in sorted(matches, reverse=True):
+        if ping(pid):
+            return pid
+    return max(matches)
 
 
 # ---------------------------------------------------------------- input
