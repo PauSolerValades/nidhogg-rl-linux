@@ -180,6 +180,37 @@ enough for per-round reward. Ship this if B1–B4 overrun.
 
 ---
 
+## 3.9 Item B — first two passes: what happened (2026-11-11)
+
+**B1 (worker, `briefs/b1.md` → `~/nidhogg-rl-b1/results/b1.json`): honest negative, three findings.**
+
+* 3 boundaries / 15 dumps / 276 M u32 slots: 2.44 M changed at a boundary → 691 k idle-stable →
+  206 k after the second boundary → 763 under the strict cycle rule. The top cluster (702 of 763)
+  is **HUD text draw alpha** — a *consequence* of the boundary, not the phase. Shortlist of 33
+  non-graphics slots decodes as string/alpha fragments and sizes.
+* **Finding 1 (a real bug, now fixed):** the spy's command loop read into a **4 KiB** buffer, so a
+  large `memory_many` batch silently lost its tail — 29 of 119 regions were missing from its first
+  dump and nothing reported it. Buffer is now 1 MiB and the client chunks by *bytes*; proven with
+  a 4000-request batch (4000/4000, previously ~160).
+* **Finding 2:** region identity is the **base alone** — a region at `0x102b2000` grows and
+  shrinks (6.9→7.5 MB), so keying dumps by base+size hides megabytes between comparisons.
+* **Finding 3:** the forfeit dialog **repaints nothing** when `Right` moves the cursor, so a pixel
+  diff calls the press "swallowed" when it landed (3/3 forfeits did work, verified by the winner
+  screen). Do not use a frame diff to check that dialog.
+
+**B2 (here, `scripts/phase_b2.py`): instance-scoped boundary diff.** Enumerates live instances
+(type structs → `type+0xa0` → chain, 6120 records = 3.7 MB) and diffs only those across the
+boundary — 2.7 GB → 3.8 MB. First cut: 4395 changed slots, **209 with small (enum-like) values**.
+Then adding "constant within a phase" reduced it further, but the run could not complete:
+**`forfeit → READY` was not reliable enough to assert on**, and that is the point —
+
+> the boundary oracle is the thing being hunted. Use the worker's verified oracle (the **winner
+> screen**, detected from the frame) instead of `on_ready_screen`, which is too strict.
+
+**Next pass for B3/B4:** take the 209 small-value candidates, put them in `watch` (16 at a time),
+and record over ~10 boundaries with the winner screen as the ground truth. Keep what flips exactly
+once per boundary in both directions; then write-test the survivors.
+
 ## 4. Parallelisation — two lanes, one farm each
 
 The two items are independent *except* that B2 wants A's output. So:

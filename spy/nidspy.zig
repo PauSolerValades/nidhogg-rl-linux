@@ -522,7 +522,10 @@ fn dispatch(line: []const u8) void {
 }
 
 fn loop() void {
-    var file: [max_line * 8]u8 = undefined;
+    // The whole command file is read in one go, so this buffer bounds a batch. It used to be
+    // 4 KiB (max_line * 8) and a large `memory_many` batch silently lost its tail: a worker's
+    // 119-region dump arrived 29 regions short, and nothing reported it.
+    var file: [cmd_buf]u8 = undefined;
     while (true) {
         sleepNs(poll_ns);
         // CLAIM FIRST, then read. Reading first and renaming afterwards loses a command
@@ -542,6 +545,7 @@ fn loop() void {
     }
 }
 const max_line = 512;
+const cmd_buf = 1 << 20;     // 1 MiB: matches the client's per-send cap in nidlinux._send
 
 // ------------------------------------------------------------------ entry point
 

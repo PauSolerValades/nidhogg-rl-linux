@@ -462,9 +462,21 @@ def memory_many(pid, requests, timeout=15.0):
         cmd_out = Path(path)
         cmd_out.unlink(missing_ok=True)
         lines.append(f"dump {addr:x} {size:x} {path}")
-    _send(pid, "\n".join(lines))
-    if not _wait_idle(pid, timeout):
-        return [None] * len(requests)
+    # The spy reads the whole command file in one pass; more text than its buffer and the tail
+    # is dropped silently. Chunk by bytes, not by request count.
+    batch, size = [], 0
+    for line in lines:
+        if size + len(line) > 512 * 1024:
+            _send(pid, "\n".join(batch))
+            if not _wait_idle(pid, timeout):
+                return [None] * len(requests)
+            batch, size = [], 0
+        batch.append(line)
+        size += len(line) + 1
+    if batch:
+        _send(pid, "\n".join(batch))
+        if not _wait_idle(pid, timeout):
+            return [None] * len(requests)
     out = []
     for addr, size, path in requests:
         p = Path(path)
