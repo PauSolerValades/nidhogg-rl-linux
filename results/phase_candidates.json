@@ -1,0 +1,50 @@
+{
+ "candidates": [
+  {
+   "addr": 7957412,
+   "region": "rec",
+   "offset": 252,
+   "live": 0,
+   "over": 117,
+   "cycle2": [
+    0,
+    117
+   ]
+  },
+  {
+   "addr": 235584520,
+   "region": "node",
+   "offset": 8,
+   "live": 1,
+   "over": 257,
+   "cycle2": [
+    1,
+    257
+   ]
+  }
+ ],
+ "small": [
+  {
+   "addr": 7957412,
+   "region": "rec",
+   "offset": 252,
+   "live": 0,
+   "over": 117,
+   "cycle2": [
+    0,
+    117
+   ]
+  },
+  {
+   "addr": 235584520,
+   "region": "node",
+   "offset": 8,
+   "live": 1,
+   "over": 257,
+   "cycle2": [
+    1,
+    257
+   ]
+  }
+ ]
+}
