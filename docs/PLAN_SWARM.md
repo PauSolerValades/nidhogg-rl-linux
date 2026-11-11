@@ -12,7 +12,7 @@ measurement, not ours. Do not re-derive a GIVEN; consume it.
 | P1 / P2 keys | **UNVERIFIED — do not consume yet.** This row previously read `WASD` / `IJKL`; no lane ever tested `IJKL`, `docs/MEMORY.md:357` measured `i/j/k/l` as doing nothing, and the replication in `contrib/REPLICATION.md` bound P2 with the **arrow keys**. Human report: P1 `ASDFG`, P2 arrows, plus other keys. Measure both with `find_players_by_input` on READY before any lane relies on it. |
 | fighter record layout | stride `0x200`; `x@+0xEC`, `y@+0xF0`, `facing f32@+0xD8`, `anim u32@+0xBC`, `type u32@+0x88` |
 | ground / pad y | `192` / `128` |
-| **ORANGE (P2) score** | **`0xd5f57c8`** u32 — write 0/1/2 changes HUD bars |
+| ~~ORANGE (P2) score~~ | **REFUTED 2026-11-10 — do not consume.** `0xd5f57c8` and all three copies leave the tally unchanged when written 0/1/2 (12 writes, direct bar count; `docs/TMP_CURRENT_STATE.md` §2.4b). Lane C's oracle stands, the address does not; the field is unknown |
 | score copies (not displayed) | `0xf3c6368`, `0xf3c63e8`, `0xf3c6468` (stride `0x80`, region `0xece0000`) |
 | HUD score rects | P1 `[56,14,80,30]`, P2 `[214,14,238,30]`, drawn only on READY |
 | round boundary on demand | `Escape` → `Down, Down` → `Enter` → FORFEIT → YES (real Winner screen) |

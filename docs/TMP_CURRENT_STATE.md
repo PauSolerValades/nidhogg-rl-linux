@@ -48,10 +48,33 @@ y = 192 on arena ground, 128 on the READY pads
 
 | field | address / offset | how proven |
 |---|---|---|
-| **ORANGE WINS (score)** | **`0xd5f57c8`**, region `0xd412000–0xdd10000`, u32 | **DISPUTED — write lands, screen does not change.** Earlier note said "write 0 → tally blank, 1 → two bars, reproduced in two processes"; a re-test on this host with a byte-identical build (`data.win` `42969eea1ed383fb`) found 0 static pixels changed between 0/1/2 on the READY screen, with the write readback confirmed and a positive control (pause overlay: 28k px). See `state/claims.jsonl` and `python3 scripts/score_oracle.py 0`. Do not build reward on this address until a write is seen to move the HUD. |
+| ~~**ORANGE WINS (score)**~~ | ~~`0xd5f57c8`~~ | **REFUTED 2026-11-10** — the write lands, the tally never moves. Stronger than "disputed": writing 0/1/2 to it *and* to the three documented copies leaves the bar count unchanged (12 writes, direct bar count), including `0xf3c63e8`, whose value equalled the display at the time. See §2.4b. |
 | score copies (not displayed) | `0xf3c6368`, `0xf3c63e8`, `0xf3c6468` (0x80 stride, region `0xece0000`) | they track 0→1→2 but poking them never changes the HUD |
 | tick counter | per-process, find by rate test (~60 Hz, 4 % jitter) | rate measurement |
 | fighters P1/P2 x,y,facing,anim,sword | offsets above | input causality (sign+size+stop+reverse), 3/3 fresh instances |
+
+### 2.4b The displayed tally is not driven by any known int (2026-11-10)
+
+`scripts/score_state.py` counts the tally bars straight from the frame (one tall bright column
+run per win) instead of diffing pixels, so it reads the number the player sees.
+
+* Writing 0/1/2 to `0xd5f57c8` **and** to the three documented copies (`0xf3c6368`,
+  `0xf3c63e8`, `0xf3c6468`) leaves the bar count unchanged: 12 writes, readback confirmed each
+  landed, zero display changes.
+* That includes `0xf3c63e8`, whose value was **exactly the displayed count** (1) at the time —
+  so the draw does not read even the field that matches the screen.
+* After a forfeit round win the display showed one ORANGE bar while `0xd5f57c8` read **0**
+  (provisional: observed once, not yet replayed).
+
+Likely shape: the tally is **not a counter the draw reads every frame**. A non-integer write to
+that address kills the process (a glyph/frame index), and the display ignores writes to the
+value it matches — consistent with the bars being *instances* (one object per win) or a cached
+glyph index, not `repeat(wins)`.
+
+Consequences:
+* **Reward must be observed, not written** — read the tally or detect the `winner` screen.
+* The field will not fall to poke-and-look. It needs a round-boundary diff (dump, win, dump).
+* `state/claims.jsonl` holds the two verification claims; `python3 tools/claim.py verify` → 2/2 OK.
 
 ### 2.5 Game behaviour measured (matters for the RL loop)
 
