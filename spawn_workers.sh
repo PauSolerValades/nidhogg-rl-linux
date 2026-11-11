@@ -38,7 +38,9 @@ ENVSH="${NID_ENVSH:-$HOME/nidhogg-rl-install/results/env.sh}"
 if [ -f "$ENVSH" ]; then . "$ENVSH"; echo "[spawn] runtime env: $ENVSH"; else echo "[spawn] WARNING: no $ENVSH"; fi
 
 TAGS="${*:-a b c}"
-pkill -x 'Nidhogg.exe' 2>/dev/null; sleep 2
+# NEVER pkill game processes here: this box is shared, and a parallel lane may have an instance
+# running (this line was killing every lane's instance on every spawn). Farm-scoped cleanup in
+# nidlinux.clean_farm() handles stale processes, per farm.
 # Any tag a..z: farm, display band and worktree are derived from the tag, so workers can be
 # added without editing this file. Display bands are 10 apart (a=:10 b=:20 ... z=:260).
 for t in $TAGS; do
