@@ -555,6 +555,62 @@ def wait_state(pid, after_seq=0, timeout=0.2):
     return None
 
 
+# ---------------------------------------------------------------- arbitrary-field watch
+#
+# `watch` samples up to 16 u32 slots on the same per-tick seam as the state file. It is the
+# instrument every memory hunt needs: a candidate set becomes a 60 Hz time series, so
+# "does this field step exactly when the round ends" is measured instead of guessed.
+#
+# Layout must match Watch in spy/nidspy.zig.
+WATCH_FMT = "<IIQII" + "I" * 16 + "8x"
+WATCH_SIZE = 96
+WATCH_MAGIC = 0x5744494E
+
+
+class NidWatch(NamedTuple):
+    seq: int
+    tick: int
+    count: int
+    values: tuple          # ints, in the order the addresses were given
+
+
+def watch(pid, addrs):
+    """Sample these addresses (u32 each, max 16) at tick rate. Empty list = stop."""
+    _send(pid, "watch " + " ".join(f"{a:x}" for a in addrs[:16]))
+
+
+def unwatch(pid):
+    _send(pid, "watch")
+
+
+def watched(pid):
+    """Latest watch sample, or None."""
+    try:
+        raw = Path(f"/tmp/nid_watch_{pid}").read_bytes()
+    except OSError:
+        return None
+    if len(raw) != WATCH_SIZE:
+        return None
+    f = struct.unpack(WATCH_FMT, raw)
+    if f[0] != WATCH_MAGIC:
+        return None
+    return NidWatch(seq=f[2], tick=f[3], count=f[4], values=tuple(f[5:5 + f[4]]))
+
+
+def wait_watch(pid, after_seq=0, timeout=0.2):
+    """Block until a watch sample newer than after_seq arrives."""
+    if not after_seq:
+        cur = watched(pid)
+        after_seq = cur.seq if cur else 0
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        w = watched(pid)
+        if w is not None and w.seq > after_seq:
+            return w
+        time.sleep(0.0005)
+    return None
+
+
 def poke(pid, addr, raw):
     _send(pid, f"poke {addr:x} {raw.hex()}")
     time.sleep(0.2)

@@ -36,6 +36,34 @@ def main():
 
     assert "pong" in n.ping(pid), "ping"
 
+    # watch: arbitrary slots, published on the same seam, values readable back.
+    # (The publisher emits on tick change, so drop the fake tick here or nothing flows —
+    #  that is the intended behaviour: a watch sample per game tick.)
+    w1 = ctypes.c_uint32(0x11223344)
+    w2 = ctypes.c_uint32(7)
+    n.watch(pid, [ctypes.addressof(w1), ctypes.addressof(w2)])
+    w = n.wait_watch(pid, 0, timeout=1.0)
+    assert w and w.count == 2, f"watch not published: {w}"
+    assert w.values == (0x11223344, 7), f"watch values {w.values}"
+    w2.value = 9
+    before = w.seq
+    for _ in range(20):
+        w = n.wait_watch(pid, before, timeout=0.3)
+        if w and w.values[1] == 9:
+            break
+    assert w and w.values == (0x11223344, 9), f"watch did not track the change: {w}"
+    seqs = [w.seq]
+    for _ in range(3):
+        w = n.wait_watch(pid, seqs[-1], 0.3)
+        assert w, "watch stream stopped"
+        seqs.append(w.seq)
+    assert seqs == list(range(seqs[0], seqs[0] + len(seqs))), f"watch seq gap {seqs}"
+    n.watch(pid, [0x8])                      # unmapped: skipped, must not crash
+    time.sleep(0.05)
+    assert n.watched(pid).count == 0, "unmapped watch address was accepted"
+    n.unwatch(pid)
+
+
     # dump: a known buffer must come back byte-identical
     known = bytes(range(64))
     buf = ctypes.create_string_buffer(known, len(known))
@@ -95,6 +123,7 @@ def main():
         assert st, "publisher stopped"
         seqs.append(st.seq)
     assert seqs == list(range(seqs[0], seqs[0] + len(seqs))), f"seq gap {seqs}"
+
 
     # with a tick counter tracked, exactly ONE sample per tick change and none in between
     tickbuf = ctypes.c_uint32(5000)

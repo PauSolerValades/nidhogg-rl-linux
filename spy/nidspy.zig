@@ -9,6 +9,7 @@
 //!   add  <hexa> <hexf32|f64> <ms> accumulate (physics cannot undo a drift)
 //!   key <keysym> [ms]             XTEST press+release, held ms (default 120)
 //!   kd <keysym> / ku <keysym>     explicit key down / up (held actions)
+//!   watch <hexaddr> ...            sample up to 16 arbitrary u32s into /tmp/nid_watch_<pid>
 //!   track <p1> <p2> <score> <tick>  start publishing /tmp/nid_state_<pid>
 //!                                 (any field 0 = not tracked; all 0 = stop publishing)
 //!   ping                          write "pong <pid>" to /tmp/nid_res_<pid>
@@ -75,12 +76,33 @@ comptime {
     std.debug.assert(@sizeOf(Snapshot) == 128);
 }
 
+/// Arbitrary-field watcher: up to 16 u32 slots sampled on the same seam as the state file.
+/// This is what turns any candidate set from a memory hunt into a 60 Hz time series, so
+/// "does this field step exactly when the round ends" stops being a guess.
+const watch_magic: u32 = 0x5744494E; // "NIDW"
+const max_watch = 16;
+
+const Watch = extern struct {
+    magic: u32,
+    version: u32,
+    seq: u64,
+    tick: u32,
+    count: u32,
+    v: [max_watch]u32,
+    _pad: [8]u8,
+};
+comptime {
+    std.debug.assert(@sizeOf(Watch) == 96);
+}
+
 var g_pid: i32 = 0;
 var cmd_path_buf: [64:0]u8 = undefined;
 var res_path_buf: [64:0]u8 = undefined;
 var done_path_buf: [64:0]u8 = undefined;
 var state_path_buf: [64:0]u8 = undefined;
 var state_tmp_buf: [64:0]u8 = undefined;
+var watch_path_buf: [64:0]u8 = undefined;
+var watch_tmp_buf: [64:0]u8 = undefined;
 var tmp_path_buf: [256:0]u8 = undefined;
 
 var cmd_path: [:0]const u8 = undefined;
@@ -88,6 +110,8 @@ var res_path: [:0]const u8 = undefined;
 var done_path: [:0]const u8 = undefined;
 var state_path: [:0]const u8 = undefined;
 var state_tmp: [:0]const u8 = undefined;
+var watch_path: [:0]const u8 = undefined;
+var watch_tmp: [:0]const u8 = undefined;
 
 /// Tracked addresses and, for each, the end of the mapping it was found in. The end
 /// bound is the crash guard: a pointer that outlives its round is skipped instead of
@@ -105,6 +129,9 @@ fn getAddr(t: *Tracked) usize {
 /// Seqlock over the tracking config: odd = a reconfigure is in flight, so a sample taken
 /// now would mix old and new. The publisher refuses to publish across a change.
 var g_gen: usize = 0;
+
+var g_watch: [max_watch]Tracked = @splat(.{});
+var g_watch_n: usize = 0;
 
 var g_p1: Tracked = .{};
 var g_p2: Tracked = .{};
@@ -287,6 +314,24 @@ fn doTrack(toks: *std.mem.TokenIterator(u8, .scalar)) void {
     }
 }
 
+/// watch <hexaddr> ... : sample up to 16 arbitrary u32s at tick rate (empty = stop).
+fn doWatch(toks: *std.mem.TokenIterator(u8, .scalar)) void {
+    var n: usize = 0;
+    while (toks.next()) |tok| {
+        if (n >= max_watch) break;
+        const a = std.fmt.parseInt(usize, tok, 16) catch 0;
+        if (a == 0) break;
+        const end = regionEnd(a);
+        if (end == 0) continue; // not mapped: skip it now rather than fault later
+        @atomicStore(usize, &g_watch[n].addr, a, .monotonic);
+        @atomicStore(usize, &g_watch[n].end, end, .monotonic);
+        n += 1;
+    }
+    @atomicStore(usize, &g_watch_n, n, .monotonic);
+    // Publish the empty state so a consumer can tell "stopped" from "stale file".
+    if (n == 0) publishWatch(0, 0);
+}
+
 // ------------------------------------------------------------------ the publisher
 
 fn publish(seq: u64, tick: u32) void {
@@ -329,13 +374,31 @@ fn publish(seq: u64, tick: u32) void {
     _ = linux.renameat(linux.AT.FDCWD, state_tmp, linux.AT.FDCWD, state_path);
 }
 
+fn publishWatch(seq: u64, tick: u32) void {
+    var w: Watch = std.mem.zeroes(Watch);
+    const n = @atomicLoad(usize, &g_watch_n, .monotonic);
+    w.magic = watch_magic;
+    w.version = 1;
+    w.seq = seq;
+    w.tick = tick;
+    w.count = @intCast(n);
+    var k: usize = 0;
+    while (k < n) : (k += 1) {
+        if (inRange(&g_watch[k])) w.v[k] = loadU32(@ptrFromInt(getAddr(&g_watch[k])), 0);
+    }
+    if (!writeFile(watch_tmp, std.mem.asBytes(&w))) return;
+    _ = linux.renameat(linux.AT.FDCWD, watch_tmp, linux.AT.FDCWD, watch_path);
+}
+
 fn publisher() void {
     var seq: u64 = 0;
     var last_tick: u32 = 0;
     var last_pub: u64 = 0;
     while (true) {
         sleepNs(sample_ns);
-        if (getAddr(&g_p1) == 0 and getAddr(&g_p2) == 0) continue;
+        const tracking = getAddr(&g_p1) != 0 or getAddr(&g_p2) != 0;
+        const watching = @atomicLoad(usize, &g_watch_n, .monotonic) > 0;
+        if (!tracking and !watching) continue;
         const t = now();
         var tick: u32 = 0;
         if (inRange(&g_tick)) {
@@ -347,7 +410,8 @@ fn publisher() void {
         }
         last_pub = t;
         seq += 1;
-        publish(seq, tick);
+        if (tracking) publish(seq, tick);
+        if (watching) publishWatch(seq, tick);
     }
 }
 
@@ -446,6 +510,8 @@ fn dispatch(line: []const u8) void {
         doKeyEdge(it.next() orelse return, true);
     } else if (std.mem.eql(u8, verb, "ku")) {
         doKeyEdge(it.next() orelse return, false);
+    } else if (std.mem.eql(u8, verb, "watch")) {
+        doWatch(&it);
     } else if (std.mem.eql(u8, verb, "track")) {
         doTrack(&it);
     } else if (std.mem.eql(u8, verb, "ping")) {
@@ -486,6 +552,8 @@ fn boot() callconv(.c) void {
     done_path = std.mem.printSentinel(&done_path_buf, "/tmp/nid_cmd_{d}.done", .{g_pid}, 0) catch return;
     state_path = std.mem.printSentinel(&state_path_buf, "/tmp/nid_state_{d}", .{g_pid}, 0) catch return;
     state_tmp = std.mem.printSentinel(&state_tmp_buf, "/tmp/nid_state_{d}.tmp", .{g_pid}, 0) catch return;
+    watch_path = std.mem.printSentinel(&watch_path_buf, "/tmp/nid_watch_{d}", .{g_pid}, 0) catch return;
+    watch_tmp = std.mem.printSentinel(&watch_tmp_buf, "/tmp/nid_watch_{d}.tmp", .{g_pid}, 0) catch return;
     if (std.Thread.spawn(.{}, loop, .{})) |t| t.detach() else |_| {}
     if (std.Thread.spawn(.{}, publisher, .{})) |t| t.detach() else |_| {}
 }
