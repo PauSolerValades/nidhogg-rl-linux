@@ -224,6 +224,39 @@ diff **≥ 12 000 px** (failed forfeits: 1 670–6 387 px). Together with the ta
 
 **Status: no round-phase field is proven, and the only candidate set produced so far is disproven.**
 
+### 2.4i Room / substage id: monotone-step hunt is negative (2026-11-12)
+
+Human session `~/nidhogg-record/20261112-004654`: three loops of
+*yellow crosses → orange kills yellow → orange crosses → yellow kills orange*, 62 full dumps
+(2.08 GB each, every 8 s) + 165 screenshots.
+
+Rule used: a room id must be a **clean monotone step function** across the dumps — constant inside
+a room, +1..+4 at an advance, never decreasing, small values. Applied to 557 M slots over 31 dumps:
+
+| rule | survivors |
+|---|---|
+| only +1 steps, 3..12 changes, final < 16 | **0** |
+| +1..+4 steps, 3..12 changes, 0 ≤ first < 8, final < 16 | **5** |
+
+The 5 are noise: `0x6edf0d0/250/280` sit inside an **audio waveform buffer** (neighbouring dwords
+are float bit patterns that sweep), and `0xa96e7d0/800` read 0 on inspection.
+
+**Why this instrument cannot settle it:**
+
+* dumps 8 s apart: a room can advance twice in between, so the step size is unknown a priori;
+* **no room-boundary ground truth** — a frame diff cannot separate a room change from camera
+  panning (median 112 px, p90 11 323 px, and room changes land in the same 25–32 k range);
+* the room id may be per-room state (recreated on entry), in which case no slot survives to
+  compare — the same shape as the score (`§2.4g`) and the phase (`§2.4h`).
+
+**Verdict: three independent memory approaches to "which room / is the round over" are now
+negative** (phase field, global boundary diff, monotone room-id step). The validated oracle for
+round end remains **visual**: winner-screen frame diff ≥ 12 000 px (8/8, failed forfeits
+1 670–6 387 px) or the tally transition at READY (`scripts/tally.py`).
+
+The recording is still useful: 62 dumps covering repeated crossings *and kills* in one match, which
+is the data a kill/death or camera-field hunt would need.
+
 ### 2.5 Game behaviour measured (matters for the RL loop)
 
 * **Entry**: menu → `Enter×3` → READY → walk both onto pads (wall ± 0.333·W) → stage select → `Enter`.
