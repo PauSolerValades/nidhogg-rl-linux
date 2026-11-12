@@ -169,6 +169,38 @@ the screen shows; require the field to *equal* it at two points:
 That constrains both ends, which is what every previous attempt lacked. The watcher (`watch_slots.py`)
 can then hold the survivors at 2 Hz for a third confirmation without another dump.
 
+### 2.4g YELLOW score: the absolute-value rule works, the field is per-room (2026-11-12)
+
+Session `~/nidhogg-record/20261112-002609` (81 dumps, 162 GB), ground truth from the shots:
+
+```
+t=  0.0.. 41.9s   4-3
+t= 97.5..104.9s   5-3   YELLOW won
+t=171.4..181.2s   5-4   ORANGE won
+```
+
+Anchoring on the **absolute value** at three dumps (t=40, 105, 193) instead of on a delta:
+
+| rule | candidates |
+|---|---|
+| `4 -> 5 -> 5` (yellow) | **31** |
+| `3 -> 3 -> 4` (orange) | **23** |
+
+from 622 delta-+1 candidates and 2.4 M slots that changed at all. Two structural hints fell out:
+yellow candidates come in **pairs 0x84 apart**, orange ones at **0x200 stride** (the fighter-record
+stride).
+
+**Then the decisive check failed in an informative way:** walking yellow into a goal and reading
+those 54 addresses *inside the match room* gave different values (5→4, 5→2, 4→0 …). So they are
+**per-room instance copies, not a persistent counter** — which fits the observation that the tally
+is only painted on READY. A `tally` field inside the current fighter records does not exist either
+(0 offsets where yellow==5 and orange==4).
+
+**Conclusion — stop hunting the field.** For training, reward needs the *displayed* tally, and
+`scripts/tally.py` reads it in ~15 ms with the documented colours (`ready=True YELLOW=5 ORANGE=4`
+verified repeatedly). The memory field would be a micro-optimisation with no effect on what the
+agent can learn, and it has now cost four sessions and ~500 GB of dumps.
+
 ### 2.5 Game behaviour measured (matters for the RL loop)
 
 * **Entry**: menu → `Enter×3` → READY → walk both onto pads (wall ± 0.333·W) → stage select → `Enter`.
