@@ -201,6 +201,29 @@ is only painted on READY. A `tally` field inside the current fighter records doe
 verified repeatedly). The memory field would be a micro-optimisation with no effect on what the
 agent can learn, and it has now cost four sessions and ~500 GB of dumps.
 
+### 2.4h Round phase: still no field, and my two candidates were an artifact (2026-11-12)
+
+Worker B3/B4 (own farm, `~/nidhogg-rl-b3/results/b4.json`) tested the two slots that
+`scripts/phase_filter.py` had produced (`node+0x08` on a "singleton controller": 0x1 live ↔ 0x101
+over; `rec+0xfc`: 0 ↔ 117). Every claim failed to reproduce:
+
+* re-running `phase_filter.py` on a fresh instance gives **0 candidates** (6 496 instances);
+* **0 of 2 952** live instances read 117 at `rec+0xfc` on a real winner screen;
+* the one `0x1` singleton's `node+0x08` reads **0x1 on a real winner screen too** — it does not flip;
+* writing `0x101` there changes **1 428 px vs 1 489 px for a no-op control** (a winner screen is
+  52 986–115 093 px): the round does not end.
+
+**Why my result looked good:** `phase_filter.py` accepts `changed > 2000` as "the winner screen",
+so it accepted a 6 387 px repaint; and `find_players_by_input` is truthy on the attract demo and on
+the winner screen, so "a live drivable match" was not checked properly. Both are threshold bugs in
+my harness, not properties of the game.
+
+**What *is* validated for round end (worker, 8/8):** the exact forfeit recipe plus a window frame
+diff **≥ 12 000 px** (failed forfeits: 1 670–6 387 px). Together with the tally transition
+(`scripts/tally.py`, exact counts at READY) that is the round-end oracle we actually have.
+
+**Status: no round-phase field is proven, and the only candidate set produced so far is disproven.**
+
 ### 2.5 Game behaviour measured (matters for the RL loop)
 
 * **Entry**: menu → `Enter×3` → READY → walk both onto pads (wall ± 0.333·W) → stage select → `Enter`.
