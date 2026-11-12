@@ -257,6 +257,35 @@ round end remains **visual**: winner-screen frame diff ≥ 12 000 px (8/8, faile
 The recording is still useful: 62 dumps covering repeated crossings *and kills* in one match, which
 is the data a kill/death or camera-field hunt would need.
 
+### 2.4j Reset: a single write does NOT survive — physics rewrites it every tick (2026-11-12)
+
+`scripts/reset_test.py` on a live, causality-verified match (P1 `0x1906c00`, P2 `0x1906000`,
+both `y=192`, `anim 465`): six trials of read → walk → write `x`/`y` back to spawn → read back.
+
+```
+trial 0: moved by +8px,  after write Δ=8.0px,  0.35s later Δ=8.0px
+trial 1: moved by +16px, after write Δ=17.0px, 0.35s later Δ=17.0px
+trial 2: moved by +24px, after write Δ=25.0px, 0.35s later Δ=25.0px   ... (Δ keeps growing)
+```
+
+**The write is overwritten within one tick.** The value never came back — Δ is exactly where
+walking left it, and grows each trial because each trial walks further.
+
+**This corrects a long-standing entry**: `INTERFACE.md` / `MEMORY.md` record "writes are kept
+(`x += 300` does not snap back)" — but that measurement used `add`, which re-writes at ~2 kHz for
+`ms`, i.e. it wins *because it accumulates*, not because a write survives. A single `poke` loses
+to the 60 Hz physics write immediately.
+
+Consequence for episode reset: **`poke` is the wrong primitive.** The candidates are
+
+* `hold <addr> <bytes> <ms>` — pin at 2 kHz for N ms (the spy already implements it), then release
+  and check whether physics continues *from the pinned value* (it should: it integrates from the
+  current x, so a 250 ms pin at the target should leave the fighter there);
+* or find the game's own respawn/spawn trigger instead of writing position.
+
+The one-line test for tomorrow: `n.hold(pid, p1+0xEC, pack("<f", 280.0), 250)` then read after
+0.4 s — keep the result if x is still ~280.
+
 ### 2.5 Game behaviour measured (matters for the RL loop)
 
 * **Entry**: menu → `Enter×3` → READY → walk both onto pads (wall ± 0.333·W) → stage select → `Enter`.
