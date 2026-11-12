@@ -146,6 +146,29 @@ Instrument lessons (each one cost a session):
   end changes 2.9 M slots. Diff for *candidates*, then watch the candidates live
   (`scripts/watch_slots.py`, one batched read at 2 Hz, no screenshots, no key presses).
 
+### 2.4f YELLOW score: three approaches disproven (2026-11-11, later)
+
+The tally reader works (`scripts/tally.py`): with the count at 4–3 it prints `ready=True
+YELLOW=4 ORANGE=3`. What does not work is finding the field:
+
+| approach | result |
+|---|---|
+| **69 candidates** from "delta +1 at a yellow win, 0 at an orange win" (session `-234917`) | **DISPROVEN**: the tally is 4–3 now and **no slot in that set reads 4**. The rule matched the boundary's commonest delta, not the score. |
+| the `0x80`-stride array of the "score copies" (`0xf3c6368`…) | **DISPROVEN**: with the tally at 3–2 no entry reads 3. `0xf3c65e8`'s 1→2 was coincidence. |
+| dump-diff across a round boundary | **UNUSABLE**: live→READY changed 2.44 M slots; even **READY→READY across one round** changes 7 234 slots by +1 (6 793 of them 0→1). A round transition touches too much state. |
+| live watcher, 69 slots, across a yellow win (`scripts/watch_slots.py`) | no candidate moved to the tally's value; two slots did a clean 1→2 (t=45.5, t=101.3) that do not match any count. |
+
+**What is needed next — anchor on the absolute value, not on a delta.** The tally is an integer
+the screen shows; require the field to *equal* it at two points:
+
+1. dump at READY with the tally at N,
+2. one round won as yellow (tally N+1),
+3. dump again at READY,
+4. keep slots with `v1 == N` **and** `v2 == N+1`.
+
+That constrains both ends, which is what every previous attempt lacked. The watcher (`watch_slots.py`)
+can then hold the survivors at 2 Hz for a third confirmation without another dump.
+
 ### 2.5 Game behaviour measured (matters for the RL loop)
 
 * **Entry**: menu → `Enter×3` → READY → walk both onto pads (wall ± 0.333·W) → stage select → `Enter`.
