@@ -111,6 +111,41 @@ scan. Acceptance (`scripts/identity_live.py 0`, live match):
 Caveats: the object-definition pointer changes across a round, so re-resolve per round; bootstrapping
 (record -> node) costs one full rw dump (~1.2 s) once per process.
 
+### 2.4e YELLOW score: shortlist of 69, not yet verified (2026-11-11)
+
+A human session (LOCAL 2P, fresh match so WINS reset) produced the first recorded yellow wins.
+Ground truth came from `scripts/tally.py`, which reads the two documented digit rectangles with the
+documented text colours — it is calibrated (a verified 3–1 frame reads `ready=True 3 1`, a GO frame
+reads `ready=False 0 0`).
+
+Session: `~/nidhogg-record/20261111-234917` (then `-235954`).
+`t=165.5s 1-0 -> 2-0 YELLOW`, `t=258.4s 2-0 -> 2-1 ORANGE`.
+
+Rule on the full-region dumps (2.44 M slots changed at the boundary):
+
+```
++1 across the YELLOW win  AND  unchanged across the ORANGE win   ->  622
+restricted to the tally's own 1 -> 2 delta                        ->   69
+```
+
+`results/yellow_score_candidates.json`. **Not verified**: the second session's yellow win happened
+in the ~40 s between "turn on the recorder" and the recorder attaching, so the 69 slots were never
+observed across a yellow increment. The orange win *was* covered by the live watcher and none of
+the 69 moved — consistent with them being yellow-specific, but that is not proof.
+
+Dead end worth recording: `0xf3c65e8` looked attractive because it sits in the `0x80`-stride array
+of the documented score copies (`0xf3c6368`), and it did go 1→2 at the yellow win. But with the
+tally at 3–2 **no entry of that array reads 3**, so that array is not the score table and the
+prior is void.
+
+Instrument lessons (each one cost a session):
+
+* **attach first, prove samples are flowing, then say "go"** — a 40 s setup gap is enough to lose
+  the one boundary you needed.
+* **dump-diffing across a round boundary is the wrong instrument**: a 12 s window around a round
+  end changes 2.9 M slots. Diff for *candidates*, then watch the candidates live
+  (`scripts/watch_slots.py`, one batched read at 2 Hz, no screenshots, no key presses).
+
 ### 2.5 Game behaviour measured (matters for the RL loop)
 
 * **Entry**: menu → `Enter×3` → READY → walk both onto pads (wall ± 0.333·W) → stage select → `Enter`.
