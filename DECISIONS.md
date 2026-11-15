@@ -11,3 +11,11 @@
 - **Ruggero's words:** the question put to him was: "May step 01 instead be re-scoped to a live two-player match on artemis (both fighters drivable, dose-response, 40/30 px floor), with the CPU as a later evaluation milestone?" Answer: "Re-scope to local two-player (Recommended)".
 - **Correction (gold review, 2026-11-15):** the local two-player opponent is a frozen human P2, so "both fighters bound by response" does not mean an acting opponent. The re-scope only works if P2 is driven by a scripted or learned partner on the P2 keys. Claim 123 ("enter_match_v2 reaches a verified live match") records rc=1 and enter_match_v2=False in its own output, while claim 1794269370 records True; this conflict is unresolved.
 - **Note:** a claim that the score address is stable at 0xd5d9648 conflicts with a Lane C note that it varies per process. Not yet resolved; step 02 of the contract must test it in two fresh processes before any score is reported.
+
+## D-2026-11-15-mode: training runs in local two-player with P2 driven by keys
+
+- **Chosen:** the training match is local two-player (P1 yellow on a/d, P2 orange on the arrow keys), with both fighters driven by key injection. This is the mode Pau's entry path uses (briefs/p.md).
+- **Alternatives:** the CPU match (blocked on build 108); two joined game processes over localhost (netplay, `-nethost`/`-netjoin`).
+- **Why:** P2 walks ±45 px per 0.45 s hold on Right/Left, reproduced in two fresh processes (n=5 per direction per process, 40 of 40 presses, P1 0 px on P2 keys) by an independent worker (~/nf-verify/REPLAY.md on artemis). Netplay joins and syncs, but net mode ignores keyboard input (~/nf-net/NET_RESULT.md).
+- **Still provisional:** P2 jump (n=3) and attack (n=1 sweep); Up showed no change; only the 0.45 s hold was tested.
+- **Change if:** P2 stops responding to arrow keys in a fresh process, or a CPU route opens (then the CPU match becomes step 25).
