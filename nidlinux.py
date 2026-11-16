@@ -135,7 +135,7 @@ def start_ids(ids, fresh=False):
                    STEAM_COMPAT_DATA_PATH=str(prefix), SteamAppId="94400",
                    SteamGameId="94400", LD_PRELOAD=str(SPY))
         log = open(FARM / f"logs/py_{i}.log", "ab")
-        p = subprocess.Popen([str(PROTON), "waitforexitandrun", str(GAME)],
+        p = subprocess.Popen([str(PROTON), os.environ.get("NID_PROTON_VERB", "waitforexitandrun"), str(GAME)],
                              env=env, stdout=log, stderr=log, start_new_session=True)
         procs[str(i)] = {"wrapper": p.pid, "display": disp}
         print(f"instance {i}: display {disp}, wrapper {p.pid}")
